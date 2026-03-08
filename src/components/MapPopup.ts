@@ -54,10 +54,9 @@ interface GpsJammingPopupData {
   lat: number;
   lon: number;
   level: 'medium' | 'high';
-  pct: number;
-  good: number;
-  bad: number;
-  total: number;
+  npAvg: number;
+  sampleCount: number;
+  aircraftCount: number;
 }
 
 interface IranEventPopupData {
@@ -511,18 +510,26 @@ export class MapPopup {
         ${conflict.description ? `<p class="popup-description">${escapeHtml(conflict.description)}</p>` : ''}
         ${conflict.parties && conflict.parties.length > 0 ? `
           <div class="popup-section">
-            <span class="section-label">${t('popups.belligerents')}</span>
-            <div class="popup-tags">
-              ${conflict.parties.map(p => `<span class="popup-tag">${escapeHtml(p)}</span>`).join('')}
-            </div>
+            <details open>
+              <summary>${t('popups.belligerents')}</summary>
+              <div class="popup-section-content">
+                <div class="popup-tags">
+                  ${conflict.parties.map(p => `<span class="popup-tag">${escapeHtml(p)}</span>`).join('')}
+                </div>
+              </div>
+            </details>
           </div>
         ` : ''}
         ${conflict.keyDevelopments && conflict.keyDevelopments.length > 0 ? `
           <div class="popup-section">
-            <span class="section-label">${t('popups.keyDevelopments')}</span>
-            <ul class="popup-list">
-              ${conflict.keyDevelopments.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
-            </ul>
+            <details open>
+              <summary>${t('popups.keyDevelopments')}</summary>
+              <div class="popup-section-content">
+                <ul class="popup-list">
+                  ${conflict.keyDevelopments.map(d => `<li>${escapeHtml(d)}</li>`).join('')}
+                </ul>
+              </div>
+            </details>
           </div>
         ` : ''}
       </div>
@@ -636,35 +643,43 @@ export class MapPopup {
     // Historical context section
     const historySection = hotspot.history ? `
       <div class="popup-section history-section">
-        <span class="section-label">${t('popups.historicalContext')}</span>
-        <div class="history-content">
-          ${hotspot.history.lastMajorEvent ? `
-            <div class="history-event">
-              <span class="history-label">${t('popups.lastMajorEvent')}:</span>
-              <span class="history-value">${escapeHtml(hotspot.history.lastMajorEvent)} ${hotspot.history.lastMajorEventDate ? `(${escapeHtml(hotspot.history.lastMajorEventDate)})` : ''}</span>
+        <details>
+          <summary>${t('popups.historicalContext')}</summary>
+          <div class="popup-section-content">
+            <div class="history-content">
+              ${hotspot.history.lastMajorEvent ? `
+                <div class="history-event">
+                  <span class="history-label">${t('popups.lastMajorEvent')}:</span>
+                  <span class="history-value">${escapeHtml(hotspot.history.lastMajorEvent)} ${hotspot.history.lastMajorEventDate ? `(${escapeHtml(hotspot.history.lastMajorEventDate)})` : ''}</span>
+                </div>
+              ` : ''}
+              ${hotspot.history.precedentDescription ? `
+                <div class="history-event">
+                  <span class="history-label">${t('popups.precedents')}:</span>
+                  <span class="history-value">${escapeHtml(hotspot.history.precedentDescription)}</span>
+                </div>
+              ` : ''}
+              ${hotspot.history.cyclicalRisk ? `
+                <div class="history-event cyclical">
+                  <span class="history-label">${t('popups.cyclicalPattern')}:</span>
+                  <span class="history-value">${escapeHtml(hotspot.history.cyclicalRisk)}</span>
+                </div>
+              ` : ''}
             </div>
-          ` : ''}
-          ${hotspot.history.precedentDescription ? `
-            <div class="history-event">
-              <span class="history-label">${t('popups.precedents')}:</span>
-              <span class="history-value">${escapeHtml(hotspot.history.precedentDescription)}</span>
-            </div>
-          ` : ''}
-          ${hotspot.history.cyclicalRisk ? `
-            <div class="history-event cyclical">
-              <span class="history-label">${t('popups.cyclicalPattern')}:</span>
-              <span class="history-value">${escapeHtml(hotspot.history.cyclicalRisk)}</span>
-            </div>
-          ` : ''}
-        </div>
+          </div>
+        </details>
       </div>
     ` : '';
 
     // "Why it matters" section
     const whyItMattersSection = hotspot.whyItMatters ? `
       <div class="popup-section why-matters-section">
-        <span class="section-label">${t('popups.whyItMatters')}</span>
-        <p class="why-matters-text">${escapeHtml(hotspot.whyItMatters)}</p>
+        <details>
+          <summary>${t('popups.whyItMatters')}</summary>
+          <div class="popup-section-content">
+            <p class="why-matters-text">${escapeHtml(hotspot.whyItMatters)}</p>
+          </div>
+        </details>
       </div>
     ` : '';
 
@@ -698,24 +713,31 @@ export class MapPopup {
         ${historySection}
         ${hotspot.agencies && hotspot.agencies.length > 0 ? `
           <div class="popup-section">
-            <span class="section-label">${t('popups.keyEntities')}</span>
-            <div class="popup-tags">
-              ${hotspot.agencies.map(a => `<span class="popup-tag">${escapeHtml(a)}</span>`).join('')}
-            </div>
+            <details open>
+              <summary>${t('popups.keyEntities')}</summary>
+              <div class="popup-section-content">
+                <div class="popup-tags">
+                  ${hotspot.agencies.map(a => `<span class="popup-tag">${escapeHtml(a)}</span>`).join('')}
+                </div>
+              </div>
+            </details>
           </div>
         ` : ''}
         ${relatedNews && relatedNews.length > 0 ? `
           <div class="popup-section">
-          <div class="popup-section">
-            <span class="section-label">${t('popups.relatedHeadlines')}</span>
-            <div class="popup-news">
-              ${relatedNews.slice(0, 5).map(n => `
-                <div class="popup-news-item">
-                  <span class="news-source">${escapeHtml(n.source)}</span>
-                  <a href="${sanitizeUrl(n.link)}" target="_blank" class="news-title">${escapeHtml(n.title)}</a>
+            <details>
+              <summary>${t('popups.relatedHeadlines')}</summary>
+              <div class="popup-section-content">
+                <div class="popup-news">
+                  ${relatedNews.slice(0, 5).map(n => `
+                    <div class="popup-news-item">
+                      <span class="news-source">${escapeHtml(n.source)}</span>
+                      <a href="${sanitizeUrl(n.link)}" target="_blank" class="news-title">${escapeHtml(n.title)}</a>
+                    </div>
+                  `).join('')}
                 </div>
-              `).join('')}
-            </div>
+              </div>
+            </details>
           </div>
         ` : ''}
         <div class="hotspot-gdelt-context" data-hotspot-id="${escapeHtml(hotspot.id)}">
@@ -847,8 +869,10 @@ export class MapPopup {
     `;
   }
 
-  private getTimeUntil(date: Date): string {
-    const ms = date.getTime() - Date.now();
+  private getTimeUntil(date: Date | string): string {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return '—';
+    const ms = d.getTime() - Date.now();
     if (ms <= 0) return t('popups.expired');
     const hours = Math.floor(ms / (1000 * 60 * 60));
     if (hours < 1) return `${Math.floor(ms / (1000 * 60))}${t('popups.timeUnits.m')}`;
@@ -2686,7 +2710,7 @@ export class MapPopup {
       const rSev = this.normalizeSeverity(r.severity);
       const rTime = r.timestamp ? this.getTimeAgo(new Date(r.timestamp)) : '';
       const rTitle = r.title.length > 60 ? r.title.slice(0, 60) + '…' : r.title;
-      return `<li class="cluster-item"><span class="popup-badge ${rSev}" style="font-size:9px;padding:1px 4px;">${escapeHtml(rSev.toUpperCase())}</span> ${escapeHtml(rTitle)}${rTime ? ` <span style="color:var(--text-muted);font-size:10px;">${escapeHtml(rTime)}</span>` : ''}</li>`;
+      return `<li class="cluster-item"><span class="popup-badge ${rSev}">${escapeHtml(rSev.toUpperCase())}</span> ${escapeHtml(rTitle)}${rTime ? ` <span style="color:var(--text-muted);font-size:10px;">${escapeHtml(rTime)}</span>` : ''}</li>`;
     }).join('')}
           </ul>
         </div>` : '';
@@ -2731,16 +2755,16 @@ export class MapPopup {
       <div class="popup-body">
         <div class="popup-stats">
           <div class="popup-stat">
-            <span class="stat-label">${t('popups.gpsJamming.interference')}</span>
-            <span class="stat-value">${data.pct}%</span>
+            <span class="stat-label">${t('popups.gpsJamming.navPerformance')}</span>
+            <span class="stat-value">${Number(data.npAvg).toFixed(2)}</span>
           </div>
           <div class="popup-stat">
-            <span class="stat-label">${t('popups.gpsJamming.aircraftAffected')}</span>
-            <span class="stat-value">${data.bad} / ${data.total}</span>
+            <span class="stat-label">${t('popups.gpsJamming.samples')}</span>
+            <span class="stat-value">${data.sampleCount}</span>
           </div>
           <div class="popup-stat">
-            <span class="stat-label">${t('popups.gpsJamming.aircraftNormal')}</span>
-            <span class="stat-value">${data.good}</span>
+            <span class="stat-label">${t('popups.gpsJamming.aircraft')}</span>
+            <span class="stat-value">${data.aircraftCount}</span>
           </div>
           <div class="popup-stat">
             <span class="stat-label">${t('popups.gpsJamming.h3Hex')}</span>

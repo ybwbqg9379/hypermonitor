@@ -315,6 +315,26 @@ export async function initLiveChannelsWindow(containerEl?: HTMLElement): Promise
     const currentIds = new Set(channels.map((c) => c.id));
     const term = searchQuery.toLowerCase().trim();
 
+    // Auto-switch to the first tab with matches when searching
+    if (term) {
+      const activeHasMatch = filteredRegions.some(r => {
+        if (r.key !== activeRegionTab) return false;
+        return r.channelIds.some(id => {
+          const ch = optionalChannelMap.get(id);
+          return ch && (ch.name.toLowerCase().includes(term) || ch.handle?.toLowerCase().includes(term));
+        });
+      });
+      if (!activeHasMatch) {
+        const firstMatch = filteredRegions.find(r =>
+          r.channelIds.some(id => {
+            const ch = optionalChannelMap.get(id);
+            return ch && (ch.name.toLowerCase().includes(term) || ch.handle?.toLowerCase().includes(term));
+          }),
+        );
+        if (firstMatch) activeRegionTab = firstMatch.key;
+      }
+    }
+
     // Render tab buttons
     tabBar.innerHTML = '';
     for (const region of filteredRegions) {
@@ -330,7 +350,7 @@ export async function initLiveChannelsWindow(containerEl?: HTMLElement): Promise
 
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'live-news-manage-tab-btn' + (region.key === activeRegionTab ? ' active' : '');
+      btn.className = 'panel-tab' + (region.key === activeRegionTab ? ' active' : '');
       const label = t(region.labelKey) ?? region.key.toUpperCase();
       btn.textContent = term
         ? `${label} (${matchingChannels.length})`
@@ -442,7 +462,7 @@ export async function initLiveChannelsWindow(containerEl?: HTMLElement): Promise
               <input type="text" id="liveChannelsSearch" class="live-news-manage-search-input" placeholder="${escapeHtml(t('header.search') ?? 'Search')}..." autocomplete="off" />
             </div>
           </div>
-          <div class="live-news-manage-tab-bar" id="liveChannelsTabBar"></div>
+          <div class="panel-tabs" id="liveChannelsTabBar"></div>
           <div class="live-news-manage-tab-contents" id="liveChannelsTabContents"></div>
         </div>
         <div class="live-news-manage-add-section">

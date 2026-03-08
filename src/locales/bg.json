@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Залив & MENA",
     "filterPanels": "Филтриране на панели...",
     "resetLayout": "Нулиране на оформлението",
+    "unsavedChanges": "Имате незапазени промени на панелите. Да ги отхвърлите ли?",
     "panelCatCore": "Основно",
     "panelCatIntelligence": "Разузнаване",
     "panelCatRegionalNews": "Регионални новини",
@@ -973,6 +974,10 @@
         "ciiCritical": "Критичен (81–100)"
       },
       "layerGuide": "Ръководство на слои",
+      "layerWarningTitle": "Бележка за производителността",
+      "layerWarningBody": "Активирането на повече от {{threshold}} слоя може да повлияе на производителността и честотата на кадрите.",
+      "layerWarningDismiss": "Не показвай отново",
+      "layerWarningOk": "Разбрах",
       "layersTitle": "Слои",
       "timeAll": "Всички",
       "views": {
@@ -1734,9 +1739,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS интерференция",
-      "interference": "Интерференция",
-      "aircraftAffected": "Летателни средства засегнати",
-      "aircraftNormal": "Летателни средства нормално",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

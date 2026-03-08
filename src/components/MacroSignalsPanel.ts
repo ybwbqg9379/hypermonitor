@@ -164,7 +164,8 @@ export class MacroSignalsPanel extends Panel {
           if (!this.element?.isConnected) return false;
           continue;
         }
-        this.error = err instanceof Error ? err.message : 'Failed to fetch';
+        console.warn('[MacroSignals] Fetch error:', err);
+        this.error = null;
       }
     }
     this.loading = false;

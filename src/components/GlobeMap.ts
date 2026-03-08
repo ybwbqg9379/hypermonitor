@@ -23,6 +23,7 @@ import { t } from '@/services/i18n';
 import { SITE_VARIANT } from '@/config/variant';
 import { getGlobeRenderScale, resolveGlobePixelRatio, resolvePerformanceProfile, subscribeGlobeRenderScaleChange, getGlobeTexture, GLOBE_TEXTURE_URLS, subscribeGlobeTextureChange, getGlobeVisualPreset, subscribeGlobeVisualPresetChange, type GlobeRenderScale, type GlobePerformanceProfile, type GlobeVisualPreset } from '@/services/globe-render-settings';
 import { getLayersForVariant, resolveLayerLabel, type MapVariant } from '@/config/map-layer-definitions';
+import { getSecretState } from '@/services/runtime-config';
 import { resolveTradeRouteSegments, type TradeRouteSegment } from '@/config/trade-routes';
 import { GAMMA_IRRADIATORS } from '@/config/irradiators';
 import { AI_DATA_CENTERS } from '@/config/ai-datacenters';
@@ -36,7 +37,7 @@ import type { AirportDelayAlert } from '@/services/aviation';
 import type { MapContainerState, MapView, TimeRange } from './MapContainer';
 import type { CountryClickPayload } from './DeckGLMap';
 import type { WeatherAlert } from '@/services/weather';
-import type { IranEvent } from '@/services/conflict';
+import { type IranEvent, getIranEventHexColor } from '@/services/conflict';
 import type { DisplacementFlow } from '@/services/displacement';
 import type { ClimateAnomaly } from '@/services/climate';
 import type { GpsJamHex } from '@/services/gps-interference';
@@ -147,7 +148,7 @@ interface GpsJamMarker extends BaseMarker {
   _kind: 'gpsjam';
   id: string;
   level: string;
-  pct: number;
+  npAvg: number;
 }
 interface TechMarker extends BaseMarker {
   _kind: 'tech';
@@ -726,7 +727,7 @@ export class GlobeMap {
       el.innerHTML = `<div style="font-size:11px;">${icon}</div>`;
       el.title = d.title;
     } else if (d._kind === 'iran') {
-      const sc = (d.severity === 'high' || d.severity === 'critical') ? '#ff3030' : d.severity === 'medium' ? '#ff8800' : '#ffcc00';
+      const sc = getIranEventHexColor(d);
       el.innerHTML = `
         <div style="position:relative;width:9px;height:9px;">
           <div style="position:absolute;inset:0;border-radius:50%;background:${sc};border:1.5px solid rgba(255,255,255,0.5);box-shadow:0 0 5px 2px ${sc}88;"></div>
@@ -934,7 +935,7 @@ export class GlobeMap {
       html = `<span style="font-weight:bold;">${esc(d.title.slice(0, 60))}</span>` +
              `<br><span style="opacity:.7;">${esc(d.category)}</span>`;
     } else if (d._kind === 'iran') {
-      const sc = (d.severity === 'high' || d.severity === 'critical') ? '#ff3030' : d.severity === 'medium' ? '#ff8800' : '#ffcc00';
+      const sc = getIranEventHexColor(d);
       html = `<span style="color:${sc};font-weight:bold;">🎯 ${esc(d.title.slice(0, 60))}</span>` +
              `<br><span style="opacity:.7;">${esc(d.category)}${d.location ? ' · ' + esc(d.location) : ''}</span>`;
     } else if (d._kind === 'outage') {
@@ -974,7 +975,7 @@ export class GlobeMap {
       const gc = d.level === 'high' ? '#ff2020' : '#ff8800';
       html = `<span style="color:${gc};font-weight:bold;">📡 GPS Jamming</span>` +
              `<br><span style="opacity:.7;">Level: ${esc(d.level)}</span>` +
-             `<br><span style="opacity:.5;">${d.pct.toFixed(0)}% affected</span>`;
+             `<br><span style="opacity:.5;">NP avg: ${d.npAvg.toFixed(2)}</span>`;
     } else if (d._kind === 'tech') {
       html = `<span style="color:#44aaff;font-weight:bold;">💻 ${esc(d.title.slice(0, 50))}</span>` +
              `<br><span style="opacity:.7;">${esc(d.country)}</span>` +
@@ -1109,15 +1110,16 @@ export class GlobeMap {
 
   private createLayerToggles(): void {
     const layerDefs = getLayersForVariant((SITE_VARIANT || 'full') as MapVariant, 'globe');
+    const _wmKey = getSecretState('WORLDMONITOR_API_KEY').present;
     const layers = layerDefs.map(def => ({
       key: def.key,
       label: resolveLayerLabel(def, t),
       icon: def.icon,
+      premium: def.premium,
     }));
 
     const el = document.createElement('div');
     el.className = 'layer-toggles deckgl-layer-toggles';
-    // Override deckgl-layer-toggles CSS which places at bottom; globe needs top-left
     el.style.bottom = 'auto';
     el.style.top = '10px';
     el.innerHTML = `
@@ -1126,12 +1128,16 @@ export class GlobeMap {
         <button class="toggle-collapse">&#9660;</button>
       </div>
       <div class="toggle-list" style="max-height:32vh;overflow-y:auto;scrollbar-width:thin;">
-        ${layers.map(({ key, label, icon }) => `
-          <label class="layer-toggle" data-layer="${key}">
-            <input type="checkbox" ${this.layers[key] ? 'checked' : ''}>
+        ${layers.map(({ key, label, icon, premium }) => {
+          const isLocked = premium === 'locked' && !_wmKey;
+          const isEnhanced = premium === 'enhanced' && !_wmKey;
+          return `
+          <label class="layer-toggle${isLocked ? ' layer-toggle-locked' : ''}" data-layer="${key}">
+            <input type="checkbox" ${this.layers[key] ? 'checked' : ''}${isLocked ? ' disabled' : ''}>
             <span class="toggle-icon">${icon}</span>
-            <span class="toggle-label">${label}</span>
-          </label>`).join('')}
+            <span class="toggle-label">${label}${isLocked ? ' \uD83D\uDD12' : ''}${isEnhanced ? ' <span class="layer-pro-badge">PRO</span>' : ''}</span>
+          </label>`;
+        }).join('')}
       </div>`;
     const authorBadge = document.createElement('div');
     authorBadge.className = 'map-author-badge';
@@ -1895,7 +1901,7 @@ export class GlobeMap {
       id: e.id,
       title: e.title ?? '',
       category: e.category ?? '',
-      severity: e.severity ?? 'medium',
+      severity: e.severity ?? 'moderate',
       location: e.locationName ?? '',
     }));
     this.flushMarkers();
@@ -1958,7 +1964,7 @@ export class GlobeMap {
       _lng: h.lon,
       id: h.h3,
       level: h.level,
-      pct: h.pct ?? 0,
+      npAvg: h.npAvg ?? 0,
     }));
     this.flushMarkers();
   }

@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Golfo e MENA",
     "filterPanels": "Filtra pannelli...",
     "resetLayout": "Ripristina layout",
+    "unsavedChanges": "Hai modifiche ai pannelli non salvate. Scartarle?",
     "panelCatCore": "Principale",
     "panelCatIntelligence": "Intelligence",
     "panelCatRegionalNews": "Notizie Regionali",
@@ -880,6 +881,10 @@
       },
       "layersTitle": "Livelli",
       "layerGuide": "Guida ai livelli",
+      "layerWarningTitle": "Avviso sulle prestazioni",
+      "layerWarningBody": "Attivare più di {{threshold}} livelli può influire sulle prestazioni di rendering e sul frame rate.",
+      "layerWarningDismiss": "Non mostrare più",
+      "layerWarningOk": "Capito",
       "tooltip": {
         "earthquake": "Terremoto",
         "militaryAircraft": "Aerei militari",
@@ -1733,9 +1738,9 @@
     },
     "gpsJamming": {
       "title": "Interferenza GPS/GNSS",
-      "interference": "Interferenza",
-      "aircraftAffected": "Aeromobili interessati",
-      "aircraftNormal": "Aeromobili normali",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

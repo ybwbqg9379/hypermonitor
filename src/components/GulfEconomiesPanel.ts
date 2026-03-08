@@ -66,7 +66,7 @@ export class GulfEconomiesPanel extends Panel {
   }
 
   private renderGulf(data: ListGulfQuotesResponse): void {
-    if (!data.quotes.length) {
+    if (!data.quotes?.length) {
       const msg = data.rateLimited ? t('common.rateLimitedMarket') : t('common.failedMarketData');
       this.showError(msg, () => void this.fetchData());
       return;

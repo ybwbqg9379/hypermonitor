@@ -63,7 +63,7 @@ export class ServiceStatusPanel extends Panel {
     } catch (err) {
       if (this.isAbortError(err)) return false;
       if (!this.element?.isConnected) return false;
-      this.error = err instanceof Error ? err.message : 'Failed to fetch';
+      this.error = t('common.failedToLoad');
       console.error('[ServiceStatus] Fetch error:', err);
       return true;
     } finally {
@@ -100,6 +100,7 @@ export class ServiceStatusPanel extends Panel {
       return;
     }
 
+    this.setErrorState(false);
     const filtered = this.getFilteredServices();
     const issues = filtered.filter(s => s.status !== 'operational');
 

@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "海湾与中东",
     "filterPanels": "筛选面板...",
     "resetLayout": "重置布局",
+    "unsavedChanges": "您有未保存的面板更改。要放弃吗？",
     "panelCatCore": "核心",
     "panelCatIntelligence": "情报",
     "panelCatRegionalNews": "地区新闻",
@@ -973,6 +974,10 @@
         "ciiCritical": "危急 (81–100)"
       },
       "layerGuide": "图层指南",
+      "layerWarningTitle": "性能提示",
+      "layerWarningBody": "启用超过 {{threshold}} 个图层可能会影响渲染性能和帧率。",
+      "layerWarningDismiss": "不再显示",
+      "layerWarningOk": "知道了",
       "layersTitle": "图层",
       "timeAll": "全部",
       "views": {
@@ -1734,9 +1739,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS干扰",
-      "interference": "干扰",
-      "aircraftAffected": "受影响航空器",
-      "aircraftNormal": "正常航空器",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

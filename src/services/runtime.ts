@@ -440,7 +440,7 @@ function isLocalOnlyApiTarget(target: string): boolean {
 }
 
 function isKeyFreeApiTarget(target: string): boolean {
-  return target.startsWith('/api/register-interest');
+  return target.startsWith('/api/register-interest') || target.startsWith('/api/version');
 }
 
 async function fetchLocalWithStartupRetry(

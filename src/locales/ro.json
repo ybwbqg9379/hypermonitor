@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Golf și MENA",
     "filterPanels": "Filtrare panouri...",
     "resetLayout": "Resetați aspectul",
+    "unsavedChanges": "Aveți modificări nesalvate ale panourilor. Le abandonați?",
     "panelCatCore": "Principal",
     "panelCatIntelligence": "Informații",
     "panelCatRegionalNews": "Știri regionale",
@@ -973,6 +974,10 @@
         "ciiCritical": "Critic (81–100)"
       },
       "layerGuide": "Ghid de straturi",
+      "layerWarningTitle": "Notificare de performanță",
+      "layerWarningBody": "Activarea a mai mult de {{threshold}} straturi poate afecta performanța de randare și rata de cadre.",
+      "layerWarningDismiss": "Nu mai afișa",
+      "layerWarningOk": "Am înțeles",
       "layersTitle": "Straturi",
       "timeAll": "Toate",
       "views": {
@@ -1734,9 +1739,9 @@
     },
     "gpsJamming": {
       "title": "Interferență GPS/GNSS",
-      "interference": "Interferență",
-      "aircraftAffected": "Aeronava afectată",
-      "aircraftNormal": "Aeronavă Cloudmal",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

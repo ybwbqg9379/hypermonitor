@@ -22,6 +22,8 @@ export const BOOTSTRAP_CACHE_KEYS: Record<string, string> = {
   commodityQuotes:  'market:commodities-bootstrap:v1',
   cyberThreats:     'cyber:threats-bootstrap:v2',
   techReadiness:    'economic:worldbank-techreadiness:v1',
+  progressData:     'economic:worldbank-progress:v1',
+  renewableEnergy:  'economic:worldbank-renewable:v1',
   positiveGeoEvents: 'positive-events:geo-bootstrap:v1',
   theaterPosture:   'theater-posture:sebuf:stale:v1',
   riskScores:       'risk:scores:sebuf:stale:v1',
@@ -35,11 +37,13 @@ export const BOOTSTRAP_CACHE_KEYS: Record<string, string> = {
   unrestEvents:     'unrest:events:v1',
   iranEvents:       'conflict:iran-events:v1',
   ucdpEvents:       'conflict:ucdp-events:v1',
+  temporalAnomalies: 'temporal:anomalies:v1',
 };
 
 export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
   bisPolicy: 'slow', bisExchange: 'slow', bisCredit: 'slow',
   minerals: 'slow', giving: 'slow', sectors: 'slow',
+  progressData: 'slow', renewableEnergy: 'slow',
   etfFlows: 'slow', shippingRates: 'slow', wildfires: 'slow',
   climateAnomalies: 'slow', cyberThreats: 'slow', techReadiness: 'slow',
   theaterPosture: 'slow', naturalEvents: 'slow',
@@ -49,5 +53,5 @@ export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
   macroSignals: 'fast', chokepoints: 'fast', riskScores: 'fast',
   marketQuotes: 'fast', commodityQuotes: 'fast', positiveGeoEvents: 'fast',
   flightDelays: 'fast', insights: 'fast', predictions: 'fast',
-  iranEvents: 'fast',
+  iranEvents: 'fast', temporalAnomalies: 'fast',
 };

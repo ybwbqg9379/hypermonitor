@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Golfe et MENA",
     "filterPanels": "Filtrer les panneaux...",
     "resetLayout": "Réinitialiser la disposition",
+    "unsavedChanges": "Vous avez des modifications de panneaux non enregistrées. Les abandonner ?",
     "panelCatCore": "Principal",
     "panelCatIntelligence": "Renseignement",
     "panelCatRegionalNews": "Actualités Régionales",
@@ -946,6 +947,10 @@
         "ciiCritical": "Critique (81–100)"
       },
       "layerGuide": "Guide des calques",
+      "layerWarningTitle": "Avis de performance",
+      "layerWarningBody": "Activer plus de {{threshold}} couches peut affecter les performances de rendu et la fréquence d'images.",
+      "layerWarningDismiss": "Ne plus afficher",
+      "layerWarningOk": "Compris",
       "layersTitle": "Couches",
       "timeAll": "Tout",
       "views": {
@@ -1733,9 +1738,9 @@
     },
     "gpsJamming": {
       "title": "Interférence GPS/GNSS",
-      "interference": "Interférence",
-      "aircraftAffected": "Aéronefs affectés",
-      "aircraftNormal": "Aéronefs normaux",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

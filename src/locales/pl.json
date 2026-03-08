@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Zatoka & MENA",
     "filterPanels": "Filtruj panele...",
     "resetLayout": "Resetuj układ",
+    "unsavedChanges": "Masz niezapisane zmiany paneli. Odrzucić je?",
     "panelCatCore": "Główne",
     "panelCatIntelligence": "Wywiad",
     "panelCatRegionalNews": "Wiadomości Regionalne",
@@ -441,7 +442,7 @@
     },
     "story": {
       "generating": "Generuję historię...",
-      "save": "Ratować",
+      "save": "Zapisz",
       "whatsapp": "WhatsApp",
       "twitter": "X",
       "linkedin": "LinkedIn",
@@ -863,6 +864,10 @@
       },
       "layersTitle": "Warstwy",
       "layerGuide": "Przewodnik po warstwach",
+      "layerWarningTitle": "Informacja o wydajności",
+      "layerWarningBody": "Włączenie więcej niż {{threshold}} warstw może wpłynąć na wydajność renderowania i liczbę klatek na sekundę.",
+      "layerWarningDismiss": "Nie pokazuj ponownie",
+      "layerWarningOk": "Rozumiem",
       "tooltip": {
         "earthquake": "Trzęsienie ziemi",
         "militaryAircraft": "Samolot wojskowy",
@@ -1733,9 +1738,9 @@
     },
     "gpsJamming": {
       "title": "Zakłócenia GPS/GNSS",
-      "interference": "Zakłócenia",
-      "aircraftAffected": "Dotknięte samoloty",
-      "aircraftNormal": "Normalne samoloty",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

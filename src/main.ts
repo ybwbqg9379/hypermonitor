@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import * as Sentry from '@sentry/browser';
 import { inject } from '@vercel/analytics';
 import { App } from './App';
+import { installUtmInterceptor } from './utils/utm';
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN?.trim();
 
@@ -199,6 +200,16 @@ Sentry.init({
     /Client can't handle this message/,
     /Invalid LngLat object/,
     /autoReset/,
+    /webkitExitFullScreen/,
+    /downProgCallback/,
+    /syncDownloadState/,
+    /^ReferenceError: HTMLOUT is not defined$/,
+    /^ReferenceError: xbrowser is not defined$/,
+    /LibraryDetectorTests_detect/,
+    /contentBoxSize\[0\] is undefined/,
+    /Attempting to run\(\), but is already running/,
+    /Out of range source coordinates for DEM data/,
+    /Invalid character: '\\0'/,
   ],
   beforeSend(event) {
     const msg = event.exception?.values?.[0]?.value ?? '';
@@ -221,12 +232,16 @@ Sentry.init({
     }
     // Suppress Three.js OrbitControls touch crashes (finger lifted during pinch-zoom)
     if (/undefined is not an object \(evaluating 't\.x'\)|Cannot read properties of undefined \(reading 'x'\)/.test(msg)) {
-      if (frames.some(f => /_handleTouchStart|Dolly|eie|jse/.test(f.function ?? ''))) return null;
+      const nonSentryFrames = frames.filter(f => f.filename && f.filename !== '<anonymous>' && !/\/sentry-[A-Za-z0-9_-]+\.js/.test(f.filename));
+      const hasSourceMapped = nonSentryFrames.some(f => /\.(ts|tsx)$/.test(f.filename ?? '') || /^src\//.test(f.filename ?? ''));
+      if (!hasSourceMapped) return null;
     }
     // Suppress deck.gl/maplibre null-access crashes with no usable stack trace (requestAnimationFrame wrapping)
     if (/null is not an object \(evaluating '\w{1,3}\.(id|type|style)'\)/.test(msg) && frames.length === 0) return null;
     // Suppress TypeErrors from anonymous/injected scripts (no real source files)
     if (/^TypeError:/.test(msg) && frames.length > 0 && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename))) return null;
+    // Suppress parentNode.insertBefore from injected scripts only (iOS WKWebView)
+    if (/parentNode\.insertBefore/.test(msg) && frames.every(f => !f.filename || f.filename === '<anonymous>' || /^blob:/.test(f.filename))) return null;
     // Suppress errors originating entirely from blob: URLs (browser extensions)
     if (frames.length > 0 && frames.every(f => /^blob:/.test(f.filename ?? ''))) return null;
     // Suppress errors originating from UV proxy (Ultraviolet service worker)
@@ -306,6 +321,7 @@ if (urlParams.get('settings') === '1') {
     }
   );
 } else {
+  installUtmInterceptor();
   const app = new App('app');
   app
     .init()

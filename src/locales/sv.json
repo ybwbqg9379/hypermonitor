@@ -582,6 +582,10 @@
       },
       "layersTitle": "Lager",
       "layerGuide": "Lagerguide",
+      "layerWarningTitle": "Prestandameddelande",
+      "layerWarningBody": "Att aktivera fler än {{threshold}} lager kan påverka renderingsprestanda och bildfrekvens.",
+      "layerWarningDismiss": "Visa inte igen",
+      "layerWarningOk": "Uppfattat",
       "tooltip": {
         "earthquake": "Jordbävning",
         "militaryAircraft": "Militära flygplan",
@@ -1542,9 +1546,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-störning",
-      "interference": "Störning",
-      "aircraftAffected": "Drabbade flygplan",
-      "aircraftNormal": "Normala flygplan",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -2198,6 +2202,7 @@
     "sourceRegionGulfMena": "Gulfen & MENA",
     "filterPanels": "Filtrera paneler...",
     "resetLayout": "Återställ layout",
+    "unsavedChanges": "Du har osparade paneländringar. Kassera dem?",
     "panelCatCore": "Kärna",
     "panelCatIntelligence": "Underrättelser",
     "panelCatRegionalNews": "Regionala Nyheter",

@@ -72,3 +72,7 @@ Each tile provider offers different visual themes, selectable via **Settings →
 - **Mobile touch gestures** — single-finger pan with inertial velocity animation (0.92 decay factor, computed from 4-entry circular touch history), two-finger pinch-to-zoom with center-point preservation, and bottom-sheet popups with drag-to-dismiss. An 8px movement threshold prevents accidental interaction during taps
 - **Timezone-based region detection** — on first load, the map centers on the user's approximate region derived from `Intl.DateTimeFormat().resolvedOptions().timeZone` — no network dependency, no geolocation prompt. On mobile, the browser's Geolocation API is queried (5-second timeout) and the map auto-centers on the user's precise GPS coordinates at zoom level 6. If the URL already contains shared coordinates, the shared view takes precedence and geolocation is skipped
 - **Cmd+K map navigation** — the command palette supports `Map:` prefixed commands to fly to any country or region on either engine
+
+### Static Map Assets & Geocoding
+
+Country boundaries, boundary overrides, and the geocoding service are documented in [MAPS_AND_GEOCODING.md](MAPS_AND_GEOCODING.md). All large static files are served from R2 CDN via `maps.worldmonitor.app`.

@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Golf & MENA",
     "filterPanels": "Panels filtern...",
     "resetLayout": "Layout zurücksetzen",
+    "unsavedChanges": "Sie haben ungespeicherte Panel-Änderungen. Verwerfen?",
     "panelCatCore": "Kern",
     "panelCatIntelligence": "Nachrichtendienst",
     "panelCatRegionalNews": "Regionale Nachrichten",
@@ -880,6 +881,10 @@
       },
       "layersTitle": "Schichten",
       "layerGuide": "Ebenenführer",
+      "layerWarningTitle": "Leistungshinweis",
+      "layerWarningBody": "Das Aktivieren von mehr als {{threshold}} Ebenen kann die Renderleistung und Bildrate beeinträchtigen.",
+      "layerWarningDismiss": "Nicht mehr anzeigen",
+      "layerWarningOk": "Verstanden",
       "tooltip": {
         "earthquake": "Erdbeben",
         "militaryAircraft": "Militärflugzeuge",
@@ -1733,9 +1738,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-Störung",
-      "interference": "Störung",
-      "aircraftAffected": "Betroffene Flugzeuge",
-      "aircraftNormal": "Normale Flugzeuge",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

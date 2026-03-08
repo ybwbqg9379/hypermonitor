@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Залив и БВСА",
     "filterPanels": "Фильтр панелей...",
     "resetLayout": "Сбросить макет",
+    "unsavedChanges": "У вас есть несохранённые изменения панелей. Отменить?",
     "panelCatCore": "Основные",
     "panelCatIntelligence": "Разведка",
     "panelCatRegionalNews": "Региональные новости",
@@ -973,6 +974,10 @@
         "ciiCritical": "Критический (81–100)"
       },
       "layerGuide": "Справочник слоёв",
+      "layerWarningTitle": "Уведомление о производительности",
+      "layerWarningBody": "Включение более {{threshold}} слоёв может повлиять на производительность отрисовки и частоту кадров.",
+      "layerWarningDismiss": "Больше не показывать",
+      "layerWarningOk": "Понятно",
       "layersTitle": "Слои",
       "timeAll": "Все",
       "views": {
@@ -1734,9 +1739,9 @@
     },
     "gpsJamming": {
       "title": "Помехи GPS/GNSS",
-      "interference": "Помехи",
-      "aircraftAffected": "Затронутые воздушные суда",
-      "aircraftNormal": "Нормальные воздушные суда",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

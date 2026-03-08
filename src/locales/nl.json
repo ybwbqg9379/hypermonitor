@@ -402,7 +402,7 @@
       "shareTitle": "Deel verhaal",
       "close": "Dichtbij",
       "generating": "Verhaal genereren...",
-      "save": "Redden",
+      "save": "Opslaan",
       "whatsapp": "WhatsAppen",
       "twitter": "X",
       "linkedin": "LinkedIn",
@@ -582,6 +582,10 @@
       },
       "layersTitle": "Lagen",
       "layerGuide": "Lagengids",
+      "layerWarningTitle": "Prestatie-opmerking",
+      "layerWarningBody": "Het inschakelen van meer dan {{threshold}} lagen kan de renderprestaties en framesnelheid beïnvloeden.",
+      "layerWarningDismiss": "Niet meer tonen",
+      "layerWarningOk": "Begrepen",
       "tooltip": {
         "earthquake": "Aardbeving",
         "militaryAircraft": "Militaire vliegtuigen",
@@ -1542,9 +1546,9 @@
     },
     "gpsJamming": {
       "title": "GPS/GNSS-storing",
-      "interference": "Storing",
-      "aircraftAffected": "Getroffen vliegtuigen",
-      "aircraftNormal": "Normale vliegtuigen",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {
@@ -2198,6 +2202,7 @@
     "sourceRegionGulfMena": "Golf & MENA",
     "filterPanels": "Panels filteren...",
     "resetLayout": "Layout resetten",
+    "unsavedChanges": "U heeft niet-opgeslagen paneelwijzigingen. Verwijderen?",
     "panelCatCore": "Kern",
     "panelCatIntelligence": "Inlichtingen",
     "panelCatRegionalNews": "Regionaal Nieuws",

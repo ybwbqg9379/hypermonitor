@@ -127,7 +127,7 @@ export class StrategicPosturePanel extends Panel {
       this.showLoadingStage('aircraft');
       const data = await fetchCachedTheaterPosture(this.signal);
       if (!this.element?.isConnected) return;
-      if (!data || data.postures.length === 0) {
+      if (!data || !data.postures?.length) {
         this.showNoData();
         return;
       }
@@ -266,7 +266,7 @@ export class StrategicPosturePanel extends Panel {
   }
 
   public updatePostures(data: CachedTheaterPosture): void {
-    if (!data || data.postures.length === 0) {
+    if (!data || !data.postures?.length) {
       this.showNoData();
       return;
     }

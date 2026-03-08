@@ -88,6 +88,8 @@ export class App {
       localStorage.removeItem(STORAGE_KEYS.mapLayers);
       localStorage.removeItem(STORAGE_KEYS.panels);
       localStorage.removeItem(PANEL_ORDER_KEY);
+      localStorage.removeItem(PANEL_ORDER_KEY + '-bottom');
+      localStorage.removeItem(PANEL_ORDER_KEY + '-bottom-set');
       localStorage.removeItem(PANEL_SPANS_KEY);
       mapLayers = { ...defaultLayers };
       panelSettings = { ...DEFAULT_PANELS };
@@ -124,7 +126,7 @@ export class App {
             newOrder.push(...priorityPanels.filter(p => order.includes(p)));
             newOrder.push(...filtered);
             localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(newOrder));
-            console.log('[App] Migrated panel order to v1.8 layout');
+            console.log('[App] Migrated panel order to v1.9 layout');
           } catch {
             // Invalid saved order, will use defaults
           }
@@ -163,6 +165,8 @@ export class App {
       const hadSavedSpans = !!localStorage.getItem(PANEL_SPANS_KEY);
       if (hadSavedOrder || hadSavedSpans) {
         localStorage.removeItem(PANEL_ORDER_KEY);
+        localStorage.removeItem(PANEL_ORDER_KEY + '-bottom');
+        localStorage.removeItem(PANEL_ORDER_KEY + '-bottom-set');
         localStorage.removeItem(PANEL_SPANS_KEY);
         console.log('[App] Applied layout reset migration (v2.5): cleared panel order/spans');
       }
@@ -623,8 +627,13 @@ export class App {
       () => !!this.state.panels['strategic-risk']
     );
 
+    // Server-side temporal anomalies (news + satellite_fires)
+    if (SITE_VARIANT !== 'happy') {
+      this.refreshScheduler.scheduleRefresh('temporalBaseline', () => this.dataLoader.refreshTemporalBaseline(), 600_000);
+    }
+
     // WTO trade policy data — annual data, poll every 10 min to avoid hammering upstream
-    if (SITE_VARIANT === 'full' || SITE_VARIANT === 'finance') {
+    if (SITE_VARIANT === 'full' || SITE_VARIANT === 'finance' || SITE_VARIANT === 'commodity') {
       this.refreshScheduler.scheduleRefresh('tradePolicy', () => this.dataLoader.loadTradePolicy(), 10 * 60 * 1000);
       this.refreshScheduler.scheduleRefresh('supplyChain', () => this.dataLoader.loadSupplyChain(), 10 * 60 * 1000);
     }

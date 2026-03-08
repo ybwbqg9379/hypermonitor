@@ -39,7 +39,7 @@ import type {
 import { fetchMilitaryBases, type MilitaryBaseCluster as ServerBaseCluster } from '@/services/military-bases';
 import type { AirportDelayAlert, PositionSample } from '@/services/aviation';
 import { fetchAircraftPositions } from '@/services/aviation';
-import type { IranEvent } from '@/services/conflict';
+import { type IranEvent, getIranEventColor, getIranEventRadius } from '@/services/conflict';
 import type { GpsJamHex } from '@/services/gps-interference';
 import type { DisplacementFlow } from '@/services/displacement';
 import type { Earthquake } from '@/services/earthquakes';
@@ -88,6 +88,7 @@ import {
 import type { GulfInvestment } from '@/types';
 import { resolveTradeRouteSegments, TRADE_ROUTES as TRADE_ROUTES_LIST, type TradeRouteSegment } from '@/config/trade-routes';
 import { getLayersForVariant, resolveLayerLabel, type MapVariant } from '@/config/map-layer-definitions';
+import { getSecretState } from '@/services/runtime-config';
 import { MapPopup, type PopupType } from './MapPopup';
 import {
   updateHotspotEscalation,
@@ -262,15 +263,20 @@ const NUCLEAR_ICON_MAPPING = { hexagon: { x: 0, y: 0, width: 32, height: 32, mas
 const DATACENTER_ICON_MAPPING = { square: { x: 0, y: 0, width: 32, height: 32, mask: true } };
 const AIRCRAFT_ICON_MAPPING = { plane: { x: 0, y: 0, width: 32, height: 32, mask: true } };
 
-const CONFLICT_ZONES_GEOJSON: GeoJSON.FeatureCollection = {
-  type: 'FeatureCollection',
-  features: CONFLICT_ZONES.map(zone => ({
-    type: 'Feature' as const,
-    properties: { id: zone.id, name: zone.name, intensity: zone.intensity },
-    geometry: { type: 'Polygon' as const, coordinates: [zone.coords] },
-  })),
+const CONFLICT_COUNTRY_ISO: Record<string, string[]> = {
+  iran: ['IR'],
+  ukraine: ['UA'],
+  sudan: ['SD'],
+  myanmar: ['MM'],
 };
 
+function ensureClosedRing(ring: [number, number][]): [number, number][] {
+  if (ring.length < 2) return ring;
+  const first = ring[0]!;
+  const last = ring[ring.length - 1]!;
+  if (first[0] === last[0] && first[1] === last[1]) return ring;
+  return [...ring, first];
+}
 
 export class DeckGLMap {
   private static readonly MAX_CLUSTER_LEAVES = 200;
@@ -328,6 +334,7 @@ export class DeckGLMap {
   private speciesRecoveryZones: Array<SpeciesRecovery & { recoveryZone: { name: string; lat: number; lon: number } }> = [];
   private renewableInstallations: RenewableInstallation[] = [];
   private countriesGeoJsonData: FeatureCollection<Geometry> | null = null;
+  private conflictZoneGeoJson: GeoJSON.FeatureCollection | null = null;
 
   // CII choropleth data
   private ciiScoresMap: Map<string, { score: number; level: string }> = new Map();
@@ -355,7 +362,7 @@ export class DeckGLMap {
     nuclear: new Set(),
   };
 
-  private renderScheduled = false;
+  private renderRafId: number | null = null;
   private renderPaused = false;
   private renderPending = false;
   private webglLost = false;
@@ -399,7 +406,11 @@ export class DeckGLMap {
 
   constructor(container: HTMLElement, initialState: DeckMapState) {
     this.container = container;
-    this.state = initialState;
+    this.state = {
+      ...initialState,
+      pan: { ...initialState.pan },
+      layers: { ...initialState.layers },
+    };
     this.hotspots = [...INTEL_HOTSPOTS];
 
     this.debouncedRebuildLayers = debounce(() => {
@@ -515,7 +526,7 @@ export class DeckGLMap {
     const primaryStyle = isHappyVariant
       ? (getCurrentTheme() === 'light' ? HAPPY_LIGHT_STYLE : HAPPY_DARK_STYLE)
       : getStyleForProvider(initialProvider, initialMapTheme);
-    if (!isHappyVariant && typeof primaryStyle === 'string' && !primaryStyle.includes('pmtiles') && initialProvider !== 'carto') {
+    if (!isHappyVariant && typeof primaryStyle === 'string' && !primaryStyle.includes('pmtiles')) {
       this.usedFallbackStyle = true;
       const attr = this.container.querySelector('.map-attribution');
       if (attr) attr.innerHTML = '© <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
@@ -667,7 +678,7 @@ export class DeckGLMap {
       this.debouncedFetchBases();
       this.debouncedFetchAircraft();
       this.state.zoom = this.maplibreMap?.getZoom() ?? this.state.zoom;
-      this.onStateChange?.(this.state);
+      this.onStateChange?.(this.getState());
     });
 
     this.maplibreMap.on('move', () => {
@@ -694,7 +705,7 @@ export class DeckGLMap {
         this.debouncedRebuildLayers();
       }
       this.state.zoom = this.maplibreMap?.getZoom() ?? this.state.zoom;
-      this.onStateChange?.(this.state);
+      this.onStateChange?.(this.getState());
     });
   }
 
@@ -1537,12 +1548,50 @@ export class DeckGLMap {
     return layer;
   }
 
+  private buildConflictZoneGeoJson(): GeoJSON.FeatureCollection {
+    if (this.conflictZoneGeoJson) return this.conflictZoneGeoJson;
+
+    const features: GeoJSON.Feature[] = [];
+
+    for (const zone of CONFLICT_ZONES) {
+      const isoCodes = CONFLICT_COUNTRY_ISO[zone.id];
+      let usedCountryGeometry = false;
+
+      if (isoCodes?.length && this.countriesGeoJsonData) {
+        for (const feature of this.countriesGeoJsonData.features) {
+          const code = feature.properties?.['ISO3166-1-Alpha-2'];
+          if (typeof code !== 'string' || !isoCodes.includes(code)) continue;
+
+          features.push({
+            type: 'Feature',
+            properties: { id: zone.id, name: zone.name, intensity: zone.intensity },
+            geometry: feature.geometry,
+          });
+          usedCountryGeometry = true;
+        }
+      }
+
+      if (usedCountryGeometry) continue;
+
+      features.push({
+        type: 'Feature',
+        properties: { id: zone.id, name: zone.name, intensity: zone.intensity },
+        geometry: { type: 'Polygon', coordinates: [ensureClosedRing(zone.coords)] },
+      });
+    }
+
+    this.conflictZoneGeoJson = { type: 'FeatureCollection', features };
+    return this.conflictZoneGeoJson;
+  }
+
   private createConflictZonesLayer(): GeoJsonLayer {
-    const cacheKey = 'conflict-zones-layer';
+    const cacheKey = this.countriesGeoJsonData
+      ? 'conflict-zones-layer-country-geometry'
+      : 'conflict-zones-layer';
 
     const layer = new GeoJsonLayer({
       id: cacheKey,
-      data: CONFLICT_ZONES_GEOJSON,
+      data: this.buildConflictZoneGeoJson(),
       filled: true,
       stroked: true,
       getFillColor: () => COLORS.conflict,
@@ -1862,12 +1911,8 @@ export class DeckGLMap {
       id: 'iran-events-layer',
       data: this.iranEvents,
       getPosition: (d: IranEvent) => [d.longitude, d.latitude],
-      getRadius: (d: IranEvent) => (d.severity === 'high' || d.severity === 'critical') ? 20000 : d.severity === 'medium' ? 15000 : 10000,
-      getFillColor: (d: IranEvent) => {
-        if (d.severity === 'critical' || d.category === 'military') return [255, 50, 50, 220] as [number, number, number, number];
-        if (d.category === 'politics' || d.category === 'diplomacy') return [255, 165, 0, 200] as [number, number, number, number];
-        return [255, 255, 0, 180] as [number, number, number, number];
-      },
+      getRadius: (d: IranEvent) => getIranEventRadius(d.severity),
+      getFillColor: (d: IranEvent) => getIranEventColor(d),
       radiusMinPixels: 4,
       radiusMaxPixels: 16,
       pickable: true,
@@ -3127,7 +3172,7 @@ export class DeckGLMap {
       case 'ais-disruptions-layer':
         return { html: `<div class="deckgl-tooltip"><strong>AIS ${text(obj.type || t('components.deckgl.tooltip.disruption'))}</strong><br/>${text(obj.severity)} ${t('popups.severity')}<br/>${text(obj.description)}</div>` };
       case 'gps-jamming-layer':
-        return { html: `<div class="deckgl-tooltip"><strong>GPS Jamming</strong><br/>${text(obj.level)} interference (${obj.pct}%)<br/>H3: ${text(obj.h3)}</div>` };
+        return { html: `<div class="deckgl-tooltip"><strong>GPS Jamming</strong><br/>${text(obj.level)} · NP avg: ${Number(obj.npAvg).toFixed(2)}<br/>H3: ${text(obj.h3)}</div>` };
       case 'cable-advisories-layer': {
         const cableName = UNDERSEA_CABLES.find(c => c.id === obj.cableId)?.name || obj.cableId;
         return { html: `<div class="deckgl-tooltip"><strong>${text(cableName)}</strong><br/>${text(obj.severity || t('components.deckgl.tooltip.advisory'))}<br/>${text(obj.description)}</div>` };
@@ -3537,10 +3582,12 @@ export class DeckGLMap {
     toggles.className = 'layer-toggles deckgl-layer-toggles';
 
     const layerDefs = getLayersForVariant((SITE_VARIANT || 'full') as MapVariant, 'flat');
+    const _wmKey = getSecretState('WORLDMONITOR_API_KEY').present;
     const layerConfig = layerDefs.map(def => ({
       key: def.key,
       label: resolveLayerLabel(def, t),
       icon: def.icon,
+      premium: def.premium,
     }));
 
     toggles.innerHTML = `
@@ -3550,13 +3597,16 @@ export class DeckGLMap {
         <button class="toggle-collapse">&#9660;</button>
       </div>
       <div class="toggle-list" style="max-height: 32vh; overflow-y: auto; scrollbar-width: thin;">
-        ${layerConfig.map(({ key, label, icon }) => `
-          <label class="layer-toggle" data-layer="${key}">
-            <input type="checkbox" ${this.state.layers[key as keyof MapLayers] ? 'checked' : ''}>
+        ${layerConfig.map(({ key, label, icon, premium }) => {
+          const isLocked = premium === 'locked' && !_wmKey;
+          const isEnhanced = premium === 'enhanced' && !_wmKey;
+          return `
+          <label class="layer-toggle${isLocked ? ' layer-toggle-locked' : ''}" data-layer="${key}">
+            <input type="checkbox" ${this.state.layers[key as keyof MapLayers] ? 'checked' : ''}${isLocked ? ' disabled' : ''}>
             <span class="toggle-icon">${icon}</span>
-            <span class="toggle-label">${label}</span>
-          </label>
-        `).join('')}
+            <span class="toggle-label">${label}${isLocked ? ' \uD83D\uDD12' : ''}${isEnhanced ? ' <span class="layer-pro-badge">PRO</span>' : ''}</span>
+          </label>`;
+        }).join('')}
       </div>
     `;
 
@@ -3850,11 +3900,11 @@ export class DeckGLMap {
       this.renderPending = true;
       return;
     }
-    if (this.renderScheduled) return;
-    this.renderScheduled = true;
-
-    requestAnimationFrame(() => {
-      this.renderScheduled = false;
+    if (this.renderRafId !== null) {
+      cancelAnimationFrame(this.renderRafId);
+    }
+    this.renderRafId = requestAnimationFrame(() => {
+      this.renderRafId = null;
       this.updateLayers();
     });
   }
@@ -3863,6 +3913,11 @@ export class DeckGLMap {
     if (this.renderPaused === paused) return;
     this.renderPaused = paused;
     if (paused) {
+      if (this.renderRafId !== null) {
+        cancelAnimationFrame(this.renderRafId);
+        this.renderRafId = null;
+        this.renderPending = true;
+      }
       this.stopPulseAnimation();
       this.stopDayNightTimer();
       return;
@@ -3917,7 +3972,7 @@ export class DeckGLMap {
     const viewSelect = this.container.querySelector('.view-select') as HTMLSelectElement;
     if (viewSelect) viewSelect.value = view;
 
-    this.onStateChange?.(this.state);
+    this.onStateChange?.(this.getState());
   }
 
   public setZoom(zoom: number): void {
@@ -3969,19 +4024,22 @@ export class DeckGLMap {
   }
 
   public setLayers(layers: MapLayers): void {
-    this.state.layers = layers;
-    this.manageAircraftTimer(layers.flights);
+    this.state.layers = { ...layers };
+    this.manageAircraftTimer(this.state.layers.flights);
     this.render(); // Debounced
 
-    // Update toggle checkboxes
-    Object.entries(layers).forEach(([key, value]) => {
+    Object.entries(this.state.layers).forEach(([key, value]) => {
       const toggle = this.container.querySelector(`.layer-toggle[data-layer="${key}"] input`) as HTMLInputElement;
       if (toggle) toggle.checked = value;
     });
   }
 
   public getState(): DeckMapState {
-    return { ...this.state };
+    return {
+      ...this.state,
+      pan: { ...this.state.pan },
+      layers: { ...this.state.layers },
+    };
   }
 
   // Zoom controls - public for external access
@@ -4580,7 +4638,7 @@ export class DeckGLMap {
   private layerWarningShown = false;
 
   private enforceLayerLimit(): void {
-    const WARN_THRESHOLD = 9;
+    const WARN_THRESHOLD = 10;
     const togglesEl = this.container.querySelector('.deckgl-layer-toggles');
     if (!togglesEl) return;
     const activeCount = Array.from(togglesEl.querySelectorAll<HTMLInputElement>('.layer-toggle input'))
@@ -4837,6 +4895,7 @@ export class DeckGLMap {
       .then((geojson) => {
         if (!this.maplibreMap || !geojson) return;
         this.countriesGeoJsonData = geojson;
+        this.conflictZoneGeoJson = null;
         this.maplibreMap.addSource('country-boundaries', {
           type: 'geojson',
           data: geojson,
@@ -4887,6 +4946,7 @@ export class DeckGLMap {
         const paintMapTheme = getMapTheme(paintProvider);
         this.updateCountryLayerPaint(isLightMapTheme(paintMapTheme) ? 'light' : 'dark');
         if (this.highlightedCountryCode) this.highlightCountry(this.highlightedCountryCode);
+        this.render();
       })
       .catch((err) => console.warn('[DeckGLMap] Failed to load country boundaries:', err));
   }
@@ -5052,6 +5112,11 @@ export class DeckGLMap {
     this.debouncedFetchBases.cancel();
     this.debouncedFetchAircraft.cancel();
     this.rafUpdateLayers.cancel();
+
+    if (this.renderRafId !== null) {
+      cancelAnimationFrame(this.renderRafId);
+      this.renderRafId = null;
+    }
 
     if (this.moveTimeoutId) {
       clearTimeout(this.moveTimeoutId);

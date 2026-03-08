@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "อ่าวเปอร์เซีย & MENA",
     "filterPanels": "กรองแผงควบคุม...",
     "resetLayout": "รีเซ็ตเลย์เอาต์",
+    "unsavedChanges": "คุณมีการเปลี่ยนแปลงแผงควบคุมที่ยังไม่ได้บันทึก ยกเลิกหรือไม่?",
     "panelCatCore": "หลัก",
     "panelCatIntelligence": "ข่าวกรอง",
     "panelCatRegionalNews": "ข่าวภูมิภาค",
@@ -973,6 +974,10 @@
         "ciiCritical": "วิกฤต (81–100)"
       },
       "layerGuide": "คู่มือเลเยอร์",
+      "layerWarningTitle": "แจ้งเตือนประสิทธิภาพ",
+      "layerWarningBody": "การเปิดใช้งานมากกว่า {{threshold}} เลเยอร์อาจส่งผลต่อประสิทธิภาพการแสดงผลและอัตราเฟรม",
+      "layerWarningDismiss": "ไม่ต้องแสดงอีก",
+      "layerWarningOk": "รับทราบ",
       "layersTitle": "เลเยอร์",
       "timeAll": "ทั้งหมด",
       "views": {
@@ -1734,9 +1739,9 @@
     },
     "gpsJamming": {
       "title": "การรบกวน GPS/GNSS",
-      "interference": "การรบกวน",
-      "aircraftAffected": "เครื่องบินที่ได้รับผลกระทบ",
-      "aircraftNormal": "เครื่องบินปกติ",
+      "navPerformance": "Nav Performance",
+      "samples": "ADS-B Samples",
+      "aircraft": "Aircraft",
       "h3Hex": "H3 Hex"
     },
     "flight": {

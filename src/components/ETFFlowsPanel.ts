@@ -52,7 +52,7 @@ export class ETFFlowsPanel extends Panel {
         if (!this.element?.isConnected) return;
         this.error = null;
 
-        if (this.data && this.data.etfs.length === 0 && !this.data.rateLimited && attempt < 1) {
+        if (this.data && !this.data.etfs?.length && !this.data.rateLimited && attempt < 1) {
           this.showRetrying(undefined, 5);
           await new Promise(r => setTimeout(r, 5_000));
           if (!this.element?.isConnected) return;
@@ -68,7 +68,8 @@ export class ETFFlowsPanel extends Panel {
           if (!this.element?.isConnected) return;
           continue;
         }
-        this.error = err instanceof Error ? err.message : 'Failed to fetch';
+        console.warn('[ETFFlows] Fetch error:', err);
+        this.error = null;
       }
     }
     this.loading = false;
@@ -87,7 +88,7 @@ export class ETFFlowsPanel extends Panel {
     }
 
     const d = this.data;
-    if (!d.etfs.length) {
+    if (!d.etfs?.length) {
       const msg = d.rateLimited ? t('components.etfFlows.rateLimited') : t('components.etfFlows.unavailable');
       this.setContent(`<div class="panel-loading-text">${msg}</div>`);
       return;
