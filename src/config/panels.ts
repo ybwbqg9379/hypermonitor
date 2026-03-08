@@ -762,6 +762,21 @@ const COMMODITY_MOBILE_MAP_LAYERS: MapLayers = {
 };
 
 // ============================================
+// HYPER VARIANT (Custom — based on Full)
+// ============================================
+const HYPER_PANELS: Record<string, PanelConfig> = {
+  ...FULL_PANELS,
+};
+
+const HYPER_MAP_LAYERS: MapLayers = {
+  ...FULL_MAP_LAYERS,
+};
+
+const HYPER_MOBILE_MAP_LAYERS: MapLayers = {
+  ...FULL_MOBILE_MAP_LAYERS,
+};
+
+// ============================================
 // VARIANT-AWARE EXPORTS
 // ============================================
 export const DEFAULT_PANELS = SITE_VARIANT === 'happy' 
@@ -772,7 +787,9 @@ export const DEFAULT_PANELS = SITE_VARIANT === 'happy'
       ? FINANCE_PANELS 
       : SITE_VARIANT === 'commodity'
         ? COMMODITY_PANELS
-        : FULL_PANELS;
+        : SITE_VARIANT === 'hyper'
+          ? HYPER_PANELS
+          : FULL_PANELS;
 
 export const DEFAULT_MAP_LAYERS = SITE_VARIANT === 'happy' 
   ? HAPPY_MAP_LAYERS 
@@ -782,7 +799,9 @@ export const DEFAULT_MAP_LAYERS = SITE_VARIANT === 'happy'
       ? FINANCE_MAP_LAYERS 
       : SITE_VARIANT === 'commodity'
         ? COMMODITY_MAP_LAYERS
-        : FULL_MAP_LAYERS;
+        : SITE_VARIANT === 'hyper'
+          ? HYPER_MAP_LAYERS
+          : FULL_MAP_LAYERS;
 
 export const MOBILE_DEFAULT_MAP_LAYERS = SITE_VARIANT === 'happy' 
   ? HAPPY_MOBILE_MAP_LAYERS 
@@ -792,7 +811,9 @@ export const MOBILE_DEFAULT_MAP_LAYERS = SITE_VARIANT === 'happy'
       ? FINANCE_MOBILE_MAP_LAYERS 
       : SITE_VARIANT === 'commodity'
         ? COMMODITY_MOBILE_MAP_LAYERS
-        : FULL_MOBILE_MAP_LAYERS;
+        : SITE_VARIANT === 'hyper'
+          ? HYPER_MOBILE_MAP_LAYERS
+          : FULL_MOBILE_MAP_LAYERS;
 
 /** Maps map-layer toggle keys to their data-freshness source IDs (single source of truth). */
 export const LAYER_TO_SOURCE: Partial<Record<keyof MapLayers, DataSourceId[]>> = {
@@ -906,6 +927,33 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
     labelKey: 'header.panelCatGulfMena',
     panelKeys: ['gulf-economies', 'gcc-investments', 'gccNews', 'monitors', 'world-clock'],
     variants: ['finance'],
+  },
+
+  // Hyper variant — mirrors full variant categories initially
+  hyperIntelligence: {
+    labelKey: 'header.panelCatIntelligence',
+    panelKeys: ['cii', 'strategic-risk', 'intel', 'gdelt-intel', 'cascade', 'telegram-intel'],
+    variants: ['hyper'],
+  },
+  hyperRegionalNews: {
+    labelKey: 'header.panelCatRegionalNews',
+    panelKeys: ['politics', 'us', 'europe', 'middleeast', 'africa', 'latam', 'asia'],
+    variants: ['hyper'],
+  },
+  hyperMarketsFinance: {
+    labelKey: 'header.panelCatMarketsFinance',
+    panelKeys: ['commodities', 'markets', 'economic', 'trade-policy', 'supply-chain', 'finance', 'polymarket', 'macro-signals', 'gulf-economies', 'etf-flows', 'stablecoins', 'crypto', 'heatmap'],
+    variants: ['hyper'],
+  },
+  hyperTopical: {
+    labelKey: 'header.panelCatTopical',
+    panelKeys: ['energy', 'gov', 'thinktanks', 'tech', 'ai', 'layoffs'],
+    variants: ['hyper'],
+  },
+  hyperDataTracking: {
+    labelKey: 'header.panelCatDataTracking',
+    panelKeys: ['monitors', 'satellite-fires', 'ucdp-events', 'displacement', 'climate', 'population-exposure', 'security-advisories', 'oref-sirens', 'world-clock', 'tech-readiness'],
+    variants: ['hyper'],
   },
 };
 
