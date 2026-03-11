@@ -823,6 +823,10 @@ export default defineConfig({
     port: 3000,
     open: !isE2E,
     hmr: isE2E ? false : undefined,
+    headers: {
+      'X-Frame-Options': 'ALLOWALL',
+      'Content-Security-Policy': "frame-ancestors 'self' http://localhost:3000",
+    },
     watch: {
       ignored: [
         '**/test-results/**',
