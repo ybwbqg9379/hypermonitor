@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Záliv a MENA",
     "filterPanels": "Filtrovat panely...",
     "resetLayout": "Obnovit rozložení",
+    "resetLayoutTooltip": "Obnovit výchozí uspořádání panelů",
     "unsavedChanges": "Máte neuložené změny panelů. Zahodit je?",
     "panelCatCore": "Hlavní",
     "panelCatIntelligence": "Zpravodajství",
@@ -400,7 +401,9 @@
         "accelerator": "Akcelerátor"
       },
       "commands": "Příkazy",
-      "results": "Výsledky"
+      "results": "Výsledky",
+      "seeAllCommands": "Zobrazit všechny příkazy",
+      "hideCommandList": "Zpět"
     },
     "signal": {
       "title": "ZPRAVODAJSKÉ ZJIŠTĚNÍ",
@@ -969,6 +972,7 @@
       "layerWarningDismiss": "Příště nezobrazovat",
       "layerWarningOk": "Rozumím",
       "layersTitle": "Vrstvy",
+      "layerSearch": "Hledat vrstvy...",
       "timeAll": "Vše",
       "views": {
         "global": "Globální",
@@ -998,6 +1002,7 @@
         "nuclearSites": "Jaderná zařízení",
         "gammaIrradiators": "Gamma ozařovače",
         "spaceports": "Kosmodromy",
+        "satellites": "Orbitální sledování",
         "pipelines": "Potrubí",
         "militaryActivity": "Vojenská aktivita",
         "shipTraffic": "Lodní doprava",
@@ -1757,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Vypočítáno"
+        "computed": "Vypočítáno",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerika",

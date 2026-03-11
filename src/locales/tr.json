@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Körfez & MENA",
     "filterPanels": "Panelleri filtrele...",
     "resetLayout": "Düzeni sıfırla",
+    "resetLayoutTooltip": "Varsayılan panel düzenini geri yükle",
     "unsavedChanges": "Kaydedilmemiş panel değişiklikleriniz var. Vazgeçilsin mi?",
     "panelCatCore": "Temel",
     "panelCatIntelligence": "İstihbarat",
@@ -376,6 +377,8 @@
       "noResults": "Sonuc bulunamadi",
       "commands": "Komutlar",
       "results": "Sonuçlar",
+      "seeAllCommands": "Tüm komutları gör",
+      "hideCommandList": "Geri",
       "navigate": "gezin",
       "select": "sec",
       "close": "kapat",
@@ -979,6 +982,7 @@
       "layerWarningDismiss": "Bir daha gösterme",
       "layerWarningOk": "Anladım",
       "layersTitle": "Katmanlar",
+      "layerSearch": "Katman ara...",
       "timeAll": "Tumu",
       "views": {
         "global": "Kuresel",
@@ -1008,6 +1012,7 @@
         "nuclearSites": "Nukleer Tesisler",
         "gammaIrradiators": "Gama Isinlama Tesisleri",
         "spaceports": "Uzay Ussu",
+        "satellites": "Yörünge Gözetimi",
         "pipelines": "Boru Hatlari",
         "militaryActivity": "Askeri Faaliyet",
         "shipTraffic": "Gemi Trafigi",
@@ -1757,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Hesaplanan"
+        "computed": "Hesaplanan",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Amerikalar",

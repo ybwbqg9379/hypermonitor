@@ -1,6 +1,6 @@
 import type { AppContext, AppModule } from '@/app/app-context';
 import type { AirlineIntelPanel } from '@/components/AirlineIntelPanel';
-import type { PanelConfig } from '@/types';
+import type { PanelConfig, MapLayers } from '@/types';
 import type { MapView } from '@/components';
 import type { ClusteredEvent } from '@/types';
 import type { DashboardSnapshot } from '@/services/storage';
@@ -62,6 +62,7 @@ export interface EventHandlerCallbacks {
   syncDataFreshnessWithLayers: () => void;
   ensureCorrectZones: () => void;
   refreshOpenCountryBrief?: () => void;
+  stopLayerActivity?: (layer: keyof MapLayers) => void;
 }
 
 export class EventHandlerManager implements AppModule {
@@ -84,6 +85,7 @@ export class EventHandlerManager implements AppModule {
   private boundMapResizeVisChangeHandler: (() => void) | null = null;
   private boundMapFullscreenEscHandler: ((e: KeyboardEvent) => void) | null = null;
   private boundMobileMenuKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private boundPanelCloseHandler: ((e: Event) => void) | null = null;
   private idleTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private snapshotIntervalId: ReturnType<typeof setInterval> | null = null;
   private clockIntervalId: ReturnType<typeof setInterval> | null = null;
@@ -229,6 +231,10 @@ export class EventHandlerManager implements AppModule {
       document.removeEventListener('keydown', this.boundMobileMenuKeyHandler);
       this.boundMobileMenuKeyHandler = null;
     }
+    if (this.boundPanelCloseHandler) {
+      this.ctx.container.removeEventListener('wm:panel-close', this.boundPanelCloseHandler);
+      this.boundPanelCloseHandler = null;
+    }
     this.ctx.tvMode?.destroy();
     this.ctx.tvMode = null;
     this.ctx.unifiedSettings?.destroy();
@@ -275,6 +281,19 @@ export class EventHandlerManager implements AppModule {
       }
     };
     window.addEventListener('storage', this.boundStorageHandler);
+
+    // Handle panel close (X) button clicks
+    this.boundPanelCloseHandler = ((e: CustomEvent<{ panelId: string }>) => {
+      const { panelId } = e.detail;
+      const config = this.ctx.panelSettings[panelId];
+      if (!config) return;
+      config.enabled = false;
+      trackPanelToggled(panelId, false);
+      saveToStorage(STORAGE_KEYS.panels, this.ctx.panelSettings);
+      this.applyPanelSettings();
+      this.ctx.unifiedSettings?.refreshPanelToggles();
+    }) as EventListener;
+    this.ctx.container.addEventListener('wm:panel-close', this.boundPanelCloseHandler);
 
     document.getElementById('headerThemeToggle')?.addEventListener('click', () => {
       const next = getCurrentTheme() === 'dark' ? 'light' : 'dark';
@@ -665,10 +684,25 @@ export class EventHandlerManager implements AppModule {
     }, 1500);
   }
 
+  private getFullscreenDocument(): Document & {
+    webkitFullscreenElement?: Element | null;
+    webkitExitFullscreen?: () => Promise<void> | void;
+  } {
+    return document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void> | void;
+    };
+  }
+
   private async exitFullscreenForNavigation(): Promise<void> {
-    if (!document.fullscreenElement) return;
+    const fullscreenDocument = this.getFullscreenDocument();
+    if (!fullscreenDocument.fullscreenElement && !fullscreenDocument.webkitFullscreenElement) return;
     try {
-      await document.exitFullscreen?.();
+      if (typeof fullscreenDocument.exitFullscreen === 'function') {
+        await fullscreenDocument.exitFullscreen();
+        return;
+      }
+      await fullscreenDocument.webkitExitFullscreen?.();
     } catch { /* proceed with navigation regardless */ }
   }
 
@@ -690,8 +724,14 @@ export class EventHandlerManager implements AppModule {
   }
 
   toggleFullscreen(): void {
-    if (document.fullscreenElement) {
-      try { void document.exitFullscreen()?.catch(() => { }); } catch { }
+    const fullscreenDocument = this.getFullscreenDocument();
+    if (fullscreenDocument.fullscreenElement || fullscreenDocument.webkitFullscreenElement) {
+      try {
+        const exitResult = typeof fullscreenDocument.exitFullscreen === 'function'
+          ? fullscreenDocument.exitFullscreen()
+          : fullscreenDocument.webkitExitFullscreen?.();
+        void Promise.resolve(exitResult).catch(() => { });
+      } catch { }
     } else {
       const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
       if (el.requestFullscreen) {
@@ -920,6 +960,8 @@ export class EventHandlerManager implements AppModule {
 
       if (enabled) {
         this.callbacks.loadDataForLayer(layer);
+      } else {
+        this.callbacks.stopLayerActivity?.(layer as keyof MapLayers);
       }
     });
 

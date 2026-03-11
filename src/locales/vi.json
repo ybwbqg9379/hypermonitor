@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Vùng Vịnh & MENA",
     "filterPanels": "Lọc bảng điều khiển...",
     "resetLayout": "Đặt lại bố cục",
+    "resetLayoutTooltip": "Khôi phục sắp xếp bảng điều khiển mặc định",
     "unsavedChanges": "Bạn có thay đổi bảng điều khiển chưa lưu. Bỏ qua chúng?",
     "panelCatCore": "Cốt lõi",
     "panelCatIntelligence": "Tình báo",
@@ -376,6 +377,8 @@
       "noResults": "Không có kết quả",
       "commands": "Lệnh",
       "results": "Kết quả",
+      "seeAllCommands": "Xem tất cả lệnh",
+      "hideCommandList": "Quay lại",
       "navigate": "điều hướng",
       "select": "chọn",
       "close": "đóng",
@@ -979,6 +982,7 @@
       "layerWarningDismiss": "Không hiển thị lại",
       "layerWarningOk": "Đã hiểu",
       "layersTitle": "Lớp",
+      "layerSearch": "Tìm lớp...",
       "timeAll": "Tất cả",
       "views": {
         "global": "Toàn cầu",
@@ -1008,6 +1012,7 @@
         "nuclearSites": "Cơ sở Hạt nhân",
         "gammaIrradiators": "Cơ sở Chiếu xạ Gamma",
         "spaceports": "Sân bay Vũ trụ",
+        "satellites": "Giám sát Quỹ đạo",
         "pipelines": "Đường ống",
         "militaryActivity": "Hoạt động Quân sự",
         "shipTraffic": "Giao thông Hàng hải",
@@ -1757,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Tính toán"
+        "computed": "Tính toán",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Châu Mỹ",

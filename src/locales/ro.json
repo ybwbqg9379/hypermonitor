@@ -175,6 +175,7 @@
     "sourceRegionGulfMena": "Golf și MENA",
     "filterPanels": "Filtrare panouri...",
     "resetLayout": "Resetați aspectul",
+    "resetLayoutTooltip": "Restaurați aranjamentul implicit al panourilor",
     "unsavedChanges": "Aveți modificări nesalvate ale panourilor. Le abandonați?",
     "panelCatCore": "Principal",
     "panelCatIntelligence": "Informații",
@@ -376,6 +377,8 @@
       "noResults": "Niciun rezultat",
       "commands": "Comenzi",
       "results": "Rezultate",
+      "seeAllCommands": "Vezi toate comenzile",
+      "hideCommandList": "Înapoi",
       "navigate": "navigați",
       "select": "selectați",
       "close": "închide",
@@ -979,6 +982,7 @@
       "layerWarningDismiss": "Nu mai afișa",
       "layerWarningOk": "Am înțeles",
       "layersTitle": "Straturi",
+      "layerSearch": "Caută straturi...",
       "timeAll": "Toate",
       "views": {
         "global": "Global",
@@ -1008,6 +1012,7 @@
         "nuclearSites": "Situri nucleare",
         "gammaIrradiators": "Iradiatoare Gamma",
         "spaceports": "Porturi spațiale",
+        "satellites": "Supraveghere Orbitală",
         "pipelines": "Conducte",
         "militaryActivity": "Activitate militară",
         "shipTraffic": "Trafic naval",
@@ -1757,7 +1762,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Calculat"
+        "computed": "Calculat",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "America",

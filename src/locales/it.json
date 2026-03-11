@@ -173,6 +173,7 @@
     "sourceRegionGulfMena": "Golfo e MENA",
     "filterPanels": "Filtra pannelli...",
     "resetLayout": "Ripristina layout",
+    "resetLayoutTooltip": "Ripristina disposizione predefinita dei pannelli",
     "unsavedChanges": "Hai modifiche ai pannelli non salvate. Scartarle?",
     "panelCatCore": "Principale",
     "panelCatIntelligence": "Intelligence",
@@ -400,7 +401,9 @@
       "placeholderFinance": "Cerca o digita un comando...",
       "hintFinance": "Ricerca • Borse • Mercati • Livelli • Navigazione • Impostazioni",
       "commands": "Comandi",
-      "results": "Risultati"
+      "results": "Risultati",
+      "seeAllCommands": "Vedi tutti i comandi",
+      "hideCommandList": "Indietro"
     },
     "signal": {
       "title": "RICERCA DI INTELLIGENZA",
@@ -851,6 +854,7 @@
         "nuclearSites": "Siti nucleari",
         "gammaIrradiators": "Irradiatori gamma",
         "spaceports": "Spazioporti",
+        "satellites": "Sorveglianza Orbitale",
         "pipelines": "Condotte",
         "militaryActivity": "Attività militare",
         "shipTraffic": "Traffico navale",
@@ -880,6 +884,7 @@
         "renewableInstallations": "Energia pulita"
       },
       "layersTitle": "Livelli",
+      "layerSearch": "Cerca livelli...",
       "layerGuide": "Guida ai livelli",
       "layerWarningTitle": "Avviso sulle prestazioni",
       "layerWarningBody": "Attivare più di {{threshold}} livelli può influire sulle prestazioni di rendering e sul frame rate.",
@@ -1756,7 +1761,9 @@
       "sources": {
         "faa": "FAA ASWS",
         "eurocontrol": "Eurocontrol",
-        "computed": "Calcolato"
+        "computed": "Calcolato",
+        "aviationstack": "Flight Data",
+        "notam": "NOTAM"
       },
       "regions": {
         "americas": "Americhe",
