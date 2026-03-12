@@ -15,6 +15,8 @@
 import { changeLanguage, getCurrentLanguage } from './i18n';
 import { getCurrentTheme, setTheme, type Theme } from '@/utils/theme-manager';
 import { getMapProvider, setMapTheme, isLightMapTheme, getMapTheme } from '@/config/basemap';
+import { calculateCII } from '@/services/country-instability';
+import { getRecentAlerts } from '@/services/cross-module-integration';
 
 const ALLOWED_ORIGINS = [
   'https://hyperinsights.vercel.app',
@@ -260,6 +262,123 @@ export function initEmbedBridge(): void {
     });
     waitObserver.observe(document.body, { childList: true, subtree: true });
   }
+
+  // 4. Data snapshot forwarding — push summarized data to parent on refresh.
+  //
+  //    Listens for `wm:intelligence-updated` (fired by cross-module-integration
+  //    and correlation after each data refresh cycle). Throttled to max once
+  //    per 60 seconds to avoid flooding the parent.
+  let lastSnapshotTime = 0;
+  const SNAPSHOT_THROTTLE_MS = 60_000;
+
+  function buildAndForwardSnapshot(): void {
+    const now = Date.now();
+    if (now - lastSnapshotTime < SNAPSHOT_THROTTLE_MS) return;
+    lastSnapshotTime = now;
+
+    // CII scores — top 20 countries
+    const ciiScores = calculateCII()
+      .slice(0, 20)
+      .map(s => ({
+        code: s.code,
+        name: s.name,
+        score: s.score,
+        level: s.level,
+      }));
+
+    // Unified alerts — most recent 10
+    const alerts = getRecentAlerts(24)
+      .slice(0, 10)
+      .map(a => ({
+        id: a.id,
+        type: a.type,
+        priority: a.priority,
+        title: a.title,
+        summary: a.summary,
+        countries: a.countries,
+        timestamp: a.timestamp.toISOString(),
+      }));
+
+    // News clusters — scrape from the DOM (read-only)
+    // Actual structure: .item.clustered with .item-title, .item-source,
+    //   .source-count, data-cluster-id, .cluster-meta > .item-time
+    // Note: .item-source contains mixed content (text nodes + badge spans),
+    //   so we extract only bare text nodes to get the clean source name.
+    const newsClusters = Array.from(
+      document.querySelectorAll('.item.clustered')
+    )
+      .slice(0, 15)
+      .map(el => {
+        const titleEl = el.querySelector('.item-title');
+        const sourceEl = el.querySelector('.item-source');
+        const countEl = el.querySelector('.source-count');
+        const timeEl = el.querySelector('.item-time');
+        const clusterId = (el as HTMLElement).dataset.clusterId ?? '';
+
+        // Extract only bare text nodes from .item-source, skipping child
+        // element text (tier badges, source-count, velocity, ALERT tag, etc.)
+        let sourceName = '';
+        if (sourceEl) {
+          for (const node of sourceEl.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) {
+              const text = node.textContent?.trim();
+              if (text) { sourceName = text; break; }
+            }
+          }
+        }
+
+        // Extract source count number from "N sources" text
+        const countText = countEl?.textContent?.trim() ?? '';
+        const countMatch = countText.match(/\d+/);
+        return {
+          id: clusterId || `cluster-${Math.random().toString(36).slice(2, 8)}`,
+          title: titleEl?.textContent?.trim() ?? '',
+          source: sourceName,
+          sourceCount: countMatch ? parseInt(countMatch[0], 10) : 1,
+          isAlert: el.classList.contains('alert'),
+          lastUpdated: timeEl?.textContent?.trim() ?? '',
+        };
+      })
+      .filter(c => c.title);
+
+    // Market data — scrape from the DOM (read-only)
+    // Actual structure: .market-item with .market-symbol (display ticker),
+    //   .market-name (full name), .market-price, .market-change
+    const markets = Array.from(
+      document.querySelectorAll('.market-item')
+    )
+      .slice(0, 30)
+      .map(el => {
+        const symbolEl = el.querySelector('.market-symbol');
+        const nameEl = el.querySelector('.market-name');
+        const priceEl = el.querySelector('.market-price');
+        const changeEl = el.querySelector('.market-change');
+        // Use explicit NaN check so legitimate 0 values are preserved
+        const rawPrice = parseFloat(priceEl?.textContent?.replace(/[^0-9.-]/g, '') ?? '');
+        const rawChange = parseFloat(changeEl?.textContent?.replace(/[^0-9.%-]/g, '') ?? '');
+        return {
+          symbol: symbolEl?.textContent?.trim() ?? '',
+          name: nameEl?.textContent?.trim() ?? '',
+          display: symbolEl?.textContent?.trim() ?? '',
+          price: Number.isNaN(rawPrice) ? null : rawPrice,
+          change: Number.isNaN(rawChange) ? null : rawChange,
+        };
+      })
+      .filter(m => m.symbol);
+
+    window.parent.postMessage({
+      type: 'hypermonitor:data-snapshot',
+      payload: {
+        ciiScores,
+        alerts,
+        newsClusters,
+        markets,
+        timestamp: new Date().toISOString(),
+      },
+    }, '*');
+  }
+
+  document.addEventListener('wm:intelligence-updated', buildAndForwardSnapshot);
 
   // Notify parent that the bridge is ready so it can (re-)send preferences
   window.parent.postMessage({ type: 'hypermonitor:ready' }, '*');
