@@ -22,7 +22,22 @@
 [data-embedded] .logo,
 [data-embedded] .logo-mobile,
 [data-embedded] .version,
-[data-embedded] .search-btn {
+[data-embedded] .search-btn,
+[data-embedded] .mobile-search-btn,
+[data-embedded] .search-mobile-fab,
+[data-embedded] .beta-badge,
+[data-embedded] .status-indicator,
+[data-embedded] .site-footer {
+  display: none !important;
+}
+
+/* Mobile menu: hide items irrelevant in embedded context
+   Keep: region selector (#mobileMenuRegion), settings (#mobileMenuSettings), close btn */
+[data-embedded] .mobile-menu-title,
+[data-embedded] .mobile-menu-variant,
+[data-embedded] #mobileMenuTheme,
+[data-embedded] .mobile-menu .mobile-menu-item[href*="x.com"],
+[data-embedded] .mobile-menu-version {
   display: none !important;
 }
 
