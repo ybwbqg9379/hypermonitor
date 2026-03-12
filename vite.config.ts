@@ -836,7 +836,7 @@ export default defineConfig({
     hmr: isE2E ? false : undefined,
     headers: {
       'X-Frame-Options': 'ALLOWALL',
-      'Content-Security-Policy': "frame-ancestors 'self' http://localhost:3000",
+      'Content-Security-Policy': "frame-ancestors 'self' http://localhost:3000 http://localhost:3001",
     },
     watch: {
       ignored: [
