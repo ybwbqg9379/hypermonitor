@@ -121,6 +121,146 @@ export function initEmbedBridge(): void {
     }
   });
 
+  // ── Event forwarding: forward key internal events to the parent ──────
+
+  /**
+   * Safely forward an internal HyperMonitor event to the parent frame.
+   * Uses '*' as targetOrigin since we're sending FROM the iframe TO the
+   * parent, and the parent validates origin on receipt.
+   */
+  function forwardEvent(payload: Record<string, unknown>): void {
+    window.parent.postMessage(
+      { type: 'hypermonitor:event', payload },
+      '*'
+    );
+  }
+
+  // 1. Breaking news alerts
+  document.addEventListener('wm:breaking-news', ((e: CustomEvent) => {
+    const alert = e.detail;
+    if (!alert || typeof alert !== 'object') return;
+    forwardEvent({
+      event: 'breaking-alert',
+      alert: {
+        id: alert.id ?? '',
+        headline: alert.headline ?? '',
+        source: alert.source ?? '',
+        link: alert.link,
+        threatLevel: alert.threatLevel ?? 'high',
+        timestamp: alert.timestamp instanceof Date
+          ? alert.timestamp.toISOString()
+          : String(alert.timestamp ?? ''),
+        origin: alert.origin ?? 'rss_alert',
+      },
+    });
+  }) as EventListener);
+
+  // 2. Market watchlist changes
+  window.addEventListener('wm-market-watchlist-changed', ((e: CustomEvent) => {
+    const detail = e.detail as { entries?: unknown } | undefined;
+    const entries = Array.isArray(detail?.entries) ? detail!.entries : [];
+    forwardEvent({
+      event: 'watchlist-changed',
+      entries: entries
+        .filter((entry: unknown) => entry && typeof entry === 'object' && 'symbol' in (entry as Record<string, unknown>))
+        .slice(0, 50)
+        .map((entry: Record<string, unknown>) => ({
+          symbol: String(entry.symbol),
+          ...(entry.name ? { name: String(entry.name) } : {}),
+          ...(entry.display ? { display: String(entry.display) } : {}),
+        })),
+    });
+  }) as EventListener);
+
+  // 3. Country brief openings — detect when a *real* country brief is rendered.
+  //
+  //    The flow is: showLoading() adds .active -> show() replaces innerHTML.
+  //    showLoading() and showGeoError() also add .active, but they render
+  //    different templates (no .cb-link-share-btn). We use a childList
+  //    observer to detect innerHTML replacements, then check for the
+  //    .cb-link-share-btn element which is exclusive to the real show() template.
+  //
+  //    Dedup: after show() renders the real brief, subsequent async updates
+  //    (updateBrief, updateMarkets, updateNews, updateInfrastructure) also
+  //    mutate the DOM. We track the last forwarded country key (code|name)
+  //    so we only forward once per brief.
+  //
+  //    Reset: hide() only removes .active (attribute change, not childList),
+  //    so a SEPARATE targeted attribute observer on the overlay element
+  //    watches for class changes and resets the key when .active is removed.
+  let lastBriefKey = '';
+
+  // --- Observer A: childList on document.body — detects real brief rendering ---
+  const briefObserver = new MutationObserver(() => {
+    const overlay = document.querySelector('.country-brief-overlay');
+    if (!overlay || !overlay.classList.contains('active')) return;
+
+    // .cb-link-share-btn only exists in the real country brief (show()),
+    // not in showLoading() or showGeoError()
+    if (!overlay.querySelector('.cb-link-share-btn')) return;
+
+    const nameEl = overlay.querySelector('.cb-country-name');
+    const flagEl = overlay.querySelector('.cb-flag');
+    if (!nameEl) return;
+
+    const name = nameEl.textContent?.trim() ?? '';
+    if (!name) return;
+
+    // Derive ISO country code from the flag emoji.
+    let code = '';
+    const flag = flagEl?.textContent?.trim() ?? '';
+    if (flag.length >= 2) {
+      const codePoint1 = flag.codePointAt(0);
+      const codePoint2 = flag.codePointAt(2);
+      if (codePoint1 && codePoint2 && codePoint1 >= 0x1F1E6 && codePoint2 >= 0x1F1E6) {
+        code = String.fromCharCode(codePoint1 - 0x1F1E6 + 65) +
+               String.fromCharCode(codePoint2 - 0x1F1E6 + 65);
+      }
+    }
+
+    // Dedup: only forward once per country brief open
+    const briefKey = code + '|' + name;
+    if (briefKey === lastBriefKey) return;
+    lastBriefKey = briefKey;
+
+    forwardEvent({
+      event: 'country-brief-opened',
+      country: { code, name },
+    });
+  });
+
+  briefObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+
+  // --- Observer B: attribute on overlay — resets dedup key on close ---
+  // hide() calls classList.remove('active'), which is an attribute mutation.
+  // The overlay element is created by CountryBriefPage's constructor and
+  // may not exist yet when the bridge initializes, so we attach lazily.
+  function attachCloseObserver(overlay: Element): void {
+    new MutationObserver(() => {
+      if (!overlay.classList.contains('active')) {
+        lastBriefKey = '';
+      }
+    }).observe(overlay, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  const overlayEl = document.querySelector('.country-brief-overlay');
+  if (overlayEl) {
+    attachCloseObserver(overlayEl);
+  } else {
+    // Overlay not yet in DOM — wait for it with a one-shot body observer
+    const waitObserver = new MutationObserver(() => {
+      const el = document.querySelector('.country-brief-overlay');
+      if (el) {
+        waitObserver.disconnect();
+        attachCloseObserver(el);
+      }
+    });
+    waitObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
   // Notify parent that the bridge is ready so it can (re-)send preferences
   window.parent.postMessage({ type: 'hypermonitor:ready' }, '*');
 }
