@@ -1,6 +1,6 @@
 /**
  * RPC: ListEtfFlows
- * Estimates BTC spot ETF flow direction from Yahoo Finance volume/price data.
+ * Estimates BTC spot ETF flow direction from Massive/Yahoo Finance volume/price data.
  */
 
 import type {
@@ -33,7 +33,55 @@ const ETF_CACHE_TTL = 900_000; // 15 minutes (in-memory fallback)
 // Helpers
 // ========================================================================
 
+/** Fetch 5-day chart from Massive (Polygon.io) and convert to YahooChartResponse format. */
+async function fetchEtfChartMassive(ticker: string, apiKey: string): Promise<YahooChartResponse | null> {
+  try {
+    const now = new Date();
+    const end = now.toISOString().split('T')[0];
+    const start = new Date(now.getTime() - 7 * 86400000).toISOString().split('T')[0];
+    const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${start}/${end}?adjusted=true&sort=asc&limit=5&apiKey=${apiKey}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as { results?: Array<{ o: number; c: number; h: number; l: number; v: number; t: number }> };
+    if (!data.results?.length) return null;
+
+    const lastBar = data.results[data.results.length - 1]!;
+    const firstBar = data.results[0]!;
+    // Convert to YahooChartResponse shape for parser compatibility
+    return {
+      chart: {
+        result: [{
+          meta: {
+            regularMarketPrice: lastBar.c,
+            chartPreviousClose: firstBar.o,
+            previousClose: firstBar.o,
+          },
+          indicators: {
+            quote: [{
+              close: data.results.map(r => r.c),
+              volume: data.results.map(r => r.v),
+            } as any],
+          },
+        }],
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchEtfChart(ticker: string): Promise<YahooChartResponse | null> {
+  // Try Massive first
+  const massiveKey = process.env.MASSIVE_API_KEY;
+  if (massiveKey) {
+    const result = await fetchEtfChartMassive(ticker, massiveKey);
+    if (result) return result;
+  }
+
+  // Fallback to Yahoo
   try {
     await yahooGate();
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;

@@ -53,12 +53,30 @@ export async function fetchYahooQuotesBatch(
   symbols: string[],
 ): Promise<{ results: Map<string, { price: number; change: number; sparkline: number[] }>; rateLimited: boolean }> {
   const results = new Map<string, { price: number; change: number; sparkline: number[] }>();
+
+  // Try Massive (Polygon.io) first — parallel, no rate limits
+  const massiveKey = process.env.MASSIVE_API_KEY;
+  if (massiveKey) {
+    const promises = symbols.map(async (sym) => {
+      const quote = await fetchMassiveQuote(sym, massiveKey);
+      if (quote) results.set(sym, quote);
+    });
+    await Promise.all(promises);
+
+    // If Massive covered all symbols, skip Yahoo entirely
+    if (results.size >= symbols.length) {
+      return { results, rateLimited: false };
+    }
+  }
+
+  // Fallback: fetch remaining symbols from Yahoo (sequential, rate-limited)
+  const remaining = symbols.filter(s => !results.has(s));
   let rateLimitHits = 0;
   let consecutiveFails = 0;
-  for (let i = 0; i < symbols.length; i++) {
-    const q = await fetchYahooQuote(symbols[i]!);
+  for (let i = 0; i < remaining.length; i++) {
+    const q = await fetchYahooQuoteDirect(remaining[i]!);
     if (q) {
-      results.set(symbols[i]!, q);
+      results.set(remaining[i]!, q);
       consecutiveFails = 0;
     } else {
       rateLimitHits++;
@@ -66,7 +84,7 @@ export async function fetchYahooQuotesBatch(
     }
     if (consecutiveFails >= 5) break;
   }
-  return { results, rateLimited: rateLimitHits > symbols.length / 2 };
+  return { results, rateLimited: rateLimitHits > remaining.length / 2 };
 }
 
 // Yahoo-only symbols: indices and futures not on Finnhub free tier
@@ -143,35 +161,123 @@ export async function fetchFinnhubQuote(
 }
 
 // ========================================================================
-// Yahoo Finance quote fetcher
+// Massive (Polygon.io) — primary data source for indices/commodities/stocks
 // ========================================================================
-// TODO: Add Financial Modeling Prep (FMP) as Yahoo Finance fallback.
-//
-// FMP API docs: https://site.financialmodelingprep.com/developer/docs
-// Auth: API key required — env var FMP_API_KEY
-// Free tier: 250 requests/day (paid tiers for higher volume)
-//
-// Endpoint mapping (Yahoo → FMP):
-//   Quote:      /stable/quote?symbol=AAPL           (batch: comma-separated)
-//   Indices:    /stable/quote?symbol=^GSPC           (^GSPC, ^DJI, ^IXIC supported)
-//   Commodities:/stable/quote?symbol=GCUSD           (gold=GCUSD, oil=CLUSD, etc.)
-//   Forex:      /stable/batch-forex-quotes            (JPY/USD pairs)
-//   Crypto:     /stable/batch-crypto-quotes           (BTC, ETH, etc.)
-//   Sparkline:  /stable/historical-price-eod/light?symbol=AAPL  (daily close)
-//   Intraday:   /stable/historical-chart/1min?symbol=AAPL
-//
-// Symbol mapping needed:
-//   ^GSPC → ^GSPC (same), ^VIX → ^VIX (same)
-//   GC=F → GCUSD, CL=F → CLUSD, NG=F → NGUSD, SI=F → SIUSD, HG=F → HGUSD
-//   JPY=X → JPYUSD (forex pair format differs)
-//   BTC-USD → BTCUSD
-//
-// Implementation plan:
-//   1. Add FMP_API_KEY to SUPPORTED_SECRET_KEYS in main.rs + settings UI
-//   2. Create fetchFMPQuote() here returning same shape as fetchYahooQuote()
-//   3. fetchYahooQuote() tries Yahoo first → on 429/failure, tries FMP if key exists
-//   4. economic/_shared.ts fetchJSON() same fallback for Yahoo chart URLs
-//   5. get-macro-signals.ts needs chart data (1y range) — use /stable/historical-price-eod/light
+
+const MASSIVE_BASE = 'https://api.massive.com';
+
+// Startup diagnostic
+if (process.env.MASSIVE_API_KEY) {
+  console.log(`[Massive] API key configured (${process.env.MASSIVE_API_KEY.slice(0, 4)}...)`);
+} else {
+  console.warn('[Massive] MASSIVE_API_KEY not set — falling back to Yahoo Finance');
+}
+
+/** Maps Yahoo Finance ticker format to Massive (Polygon.io) ticker format. */
+const YAHOO_TO_MASSIVE: Record<string, string> = {
+  // US indices
+  '^GSPC': 'I:SPX',
+  '^DJI': 'I:DJI',
+  '^IXIC': 'I:COMP',
+  '^VIX': 'I:VIX',
+  '^RUT': 'I:RUT',
+  '^TNX': 'I:TNX',
+  // Precious metals (forex spot — Massive doesn't support commodity futures like CL=F, NG=F, HG=F)
+  'GC=F': 'C:XAUUSD',
+  'SI=F': 'C:XAGUSD',
+  // Forex (Yahoo format: XXXUSD=X or XXX=X)
+  'SARUSD=X': 'C:USDSAR',
+  'AEDUSD=X': 'C:USDAED',
+  'QARUSD=X': 'C:USDQAR',
+  'KWDUSD=X': 'C:USDKWD',
+  'BHDUSD=X': 'C:USDBHD',
+  'OMRUSD=X': 'C:USDOMR',
+  'JPY=X': 'C:USDJPY',
+  'EURUSD=X': 'C:EURUSD',
+  'GBPUSD=X': 'C:GBPUSD',
+  'DX-Y.NYB': 'I:DXY',
+};
+
+/** Convert a Yahoo-style symbol to Polygon format. Stocks pass through as-is. */
+function toMassiveTicker(yahooSymbol: string): string {
+  return YAHOO_TO_MASSIVE[yahooSymbol] || yahooSymbol;
+}
+
+/** Checks if a symbol can be fetched from Massive (US stocks, mapped indices/commodities). */
+function isMassiveSupported(yahooSymbol: string): boolean {
+  // Explicitly mapped symbols are always supported
+  if (YAHOO_TO_MASSIVE[yahooSymbol]) return true;
+  // Plain US stock tickers (no special chars like ^ . = except hyphen for BRK-B)
+  if (/^[A-Z]{1,5}(-[A-Z])?$/.test(yahooSymbol)) return true;
+  // ETFs like UAE, QAT, GULF
+  if (/^[A-Z]{2,5}$/.test(yahooSymbol)) return true;
+  return false;
+}
+
+/**
+ * Fetch a single quote from Massive (Polygon.io).
+ * Uses /v2/aggs/ticker/{ticker}/prev for previous day close + price.
+ */
+async function fetchMassiveQuote(
+  yahooSymbol: string,
+  apiKey: string,
+): Promise<{ price: number; change: number; sparkline: number[] } | null> {
+  if (!isMassiveSupported(yahooSymbol)) return null;
+
+  const ticker = toMassiveTicker(yahooSymbol);
+  try {
+    // Fetch previous day aggregate for price + change
+    const prevUrl = `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(ticker)}/prev?adjusted=true&apiKey=${apiKey}`;
+    const resp = await fetch(prevUrl, {
+      headers: { 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      if (resp.status !== 404) {
+        console.warn(`[Massive] ${yahooSymbol} (${ticker}) HTTP ${resp.status}`);
+      }
+      return null;
+    }
+
+    const data = await resp.json() as {
+      results?: Array<{ o: number; c: number; h: number; l: number; v?: number; t: number }>;
+      status: string;
+    };
+
+    const bar = data.results?.[0];
+    if (!bar || bar.c === 0) return null;
+
+    const price = bar.c;
+    const change = bar.o > 0 ? ((bar.c - bar.o) / bar.o) * 100 : 0;
+
+    // Try to get sparkline (last 10 days)
+    let sparkline: number[] = [];
+    try {
+      const now = new Date();
+      const end = now.toISOString().split('T')[0];
+      const start = new Date(now.getTime() - 14 * 86400000).toISOString().split('T')[0];
+      const rangeUrl = `${MASSIVE_BASE}/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${start}/${end}?adjusted=true&sort=asc&limit=10&apiKey=${apiKey}`;
+      const rangeResp = await fetch(rangeUrl, {
+        headers: { 'User-Agent': CHROME_UA },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (rangeResp.ok) {
+        const rangeData = await rangeResp.json() as { results?: Array<{ c: number }> };
+        sparkline = rangeData.results?.map(r => r.c).filter((v): v is number => v != null && v > 0) || [];
+      }
+    } catch {
+      // Sparkline is optional — don't fail the whole quote
+    }
+
+    return { price, change, sparkline };
+  } catch (err) {
+    console.warn(`[Massive] ${yahooSymbol} (${ticker}) error:`, (err as Error).message);
+    return null;
+  }
+}
+
+// ========================================================================
+// Yahoo Finance quote fetcher (fallback for symbols Massive doesn't cover)
 // ========================================================================
 
 function parseYahooChartResponse(data: YahooChartResponse): { price: number; change: number; sparkline: number[] } | null {
@@ -189,7 +295,8 @@ function parseYahooChartResponse(data: YahooChartResponse): { price: number; cha
   return { price, change, sparkline };
 }
 
-export async function fetchYahooQuote(
+/** Direct Yahoo Finance fetch (used as fallback when Massive doesn't cover a symbol). */
+async function fetchYahooQuoteDirect(
   symbol: string,
 ): Promise<{ price: number; change: number; sparkline: number[] } | null> {
   // Try direct Yahoo first
@@ -233,6 +340,24 @@ export async function fetchYahooQuote(
     console.warn(`[Yahoo] ${symbol} relay error:`, (err as Error).message);
     return null;
   }
+}
+
+/**
+ * Public API: fetch a single quote. Tries Massive first, falls back to Yahoo.
+ * This is the main entry point used by all handler RPCs.
+ */
+export async function fetchYahooQuote(
+  symbol: string,
+): Promise<{ price: number; change: number; sparkline: number[] } | null> {
+  // Try Massive first (no rate limits, higher quality data)
+  const massiveKey = process.env.MASSIVE_API_KEY;
+  if (massiveKey) {
+    const massive = await fetchMassiveQuote(symbol, massiveKey);
+    if (massive) return massive;
+  }
+
+  // Fallback to Yahoo Finance
+  return fetchYahooQuoteDirect(symbol);
 }
 
 // ========================================================================

@@ -789,14 +789,43 @@ const COMMODITY_MOBILE_MAP_LAYERS: MapLayers = {
 // ============================================
 const HYPER_PANELS: Record<string, PanelConfig> = {
   ...FULL_PANELS,
+  // Disable panels that require unconfigured API keys / relay server
+  'telegram-intel': { name: 'Telegram Intel', enabled: false, priority: 2 },     // needs TELEGRAM_* + relay
+  'airline-intel': { name: 'Airline Intelligence', enabled: false, priority: 2 }, // needs AVIATIONSTACK_API + relay
+  'ucdp-events': { name: 'UCDP Conflict Events', enabled: false, priority: 2 },  // needs UCDP_ACCESS_TOKEN
+  'oref-sirens': { name: 'Israel Sirens', enabled: false, priority: 2 },          // needs relay WebSocket
+  'gulf-economies': { name: 'Gulf Economies', enabled: false, priority: 2 },      // Yahoo-only tickers (^TASI.SR etc.)
+  'commodities': { name: 'Commodities', enabled: false, priority: 2 },            // Yahoo-only futures (CL=F, NG=F, HG=F)
+  'macro-signals': { name: 'Macro Signals', enabled: false, priority: 2 },        // depends on Yahoo commodity futures
+  // Disable panels that depend on relay or external APIs we have no access to
+  intel: { name: 'Intel Feed', enabled: false, priority: 2 },                     // needs relay (WS_RELAY_URL)
+  cii: { name: 'Country Instability', enabled: false, priority: 2 },              // external API timeout
+  'strategic-posture': { name: 'AI Strategic Posture', enabled: false, priority: 2 }, // needs ADS-B network
+  'trade-policy': { name: 'Trade Policy', enabled: false, priority: 2 },           // external API timeout
+  'supply-chain': { name: 'Supply Chain', enabled: false, priority: 2 },           // external API timeout
+  'satellite-fires': { name: 'Fires', enabled: false, priority: 2 },              // FIRMS API slow/timeout
+  displacement: { name: 'UNHCR Displacement', enabled: false, priority: 2 },       // UNHCR API timeout
+  climate: { name: 'Climate Anomalies', enabled: false, priority: 2 },             // external API timeout
+  'population-exposure': { name: 'Population Exposure', enabled: false, priority: 2 }, // external API timeout
+  'security-advisories': { name: 'Security Advisories', enabled: false, priority: 2 }, // external API timeout
+  'tech-readiness': { name: 'Tech Readiness Index', enabled: false, priority: 2 }, // World Bank API timeout
 };
 
 const HYPER_MAP_LAYERS: MapLayers = {
   ...FULL_MAP_LAYERS,
+  // Disable layers that need relay/unconfigured keys
+  ais: false,             // needs AISSTREAM_API_KEY + relay
+  flights: false,         // needs relay (OpenSky)
+  military: false,        // needs relay (OpenSky/Wingbits)
+  ucdpEvents: false,      // needs UCDP_ACCESS_TOKEN
 };
 
 const HYPER_MOBILE_MAP_LAYERS: MapLayers = {
   ...FULL_MOBILE_MAP_LAYERS,
+  ais: false,
+  flights: false,
+  military: false,
+  ucdpEvents: false,
 };
 
 // ============================================
@@ -955,7 +984,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   // Hyper variant — mirrors full variant categories initially
   hyperIntelligence: {
     labelKey: 'header.panelCatIntelligence',
-    panelKeys: ['cii', 'strategic-risk', 'intel', 'gdelt-intel', 'cascade', 'telegram-intel'],
+    panelKeys: ['strategic-risk', 'gdelt-intel', 'cascade'],
     variants: ['hyper'],
   },
   hyperRegionalNews: {
@@ -965,7 +994,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   },
   hyperMarketsFinance: {
     labelKey: 'header.panelCatMarketsFinance',
-    panelKeys: ['commodities', 'markets', 'economic', 'trade-policy', 'supply-chain', 'finance', 'polymarket', 'macro-signals', 'gulf-economies', 'etf-flows', 'stablecoins', 'crypto', 'heatmap'],
+    panelKeys: ['markets', 'economic', 'finance', 'polymarket', 'etf-flows', 'stablecoins', 'crypto', 'heatmap'],
     variants: ['hyper'],
   },
   hyperTopical: {
@@ -975,7 +1004,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   },
   hyperDataTracking: {
     labelKey: 'header.panelCatDataTracking',
-    panelKeys: ['monitors', 'satellite-fires', 'ucdp-events', 'displacement', 'climate', 'population-exposure', 'security-advisories', 'oref-sirens', 'world-clock', 'tech-readiness'],
+    panelKeys: ['monitors', 'world-clock'],
     variants: ['hyper'],
   },
 };

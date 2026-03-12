@@ -1,6 +1,6 @@
 /**
  * RPC: GetCountryStockIndex
- * Fetches national stock market index data from Yahoo Finance.
+ * Fetches national stock market index data from Massive (Polygon.io) / Yahoo Finance.
  */
 
 import type {
@@ -64,6 +64,12 @@ const COUNTRY_INDEX: Record<string, { symbol: string; name: string }> = {
   HU: { symbol: '^BUX', name: 'BUX' },
 };
 
+// Massive (Polygon.io) index tickers — only US/major indices are supported
+const COUNTRY_MASSIVE_TICKER: Record<string, string> = {
+  US: 'I:SPX',
+  // Most non-US indices aren't available on Polygon — Yahoo is the only source
+};
+
 // ========================================================================
 // Cache
 // ========================================================================
@@ -73,6 +79,33 @@ const REDIS_CACHE_TTL = 1800; // 30 min — weekly data, slow-moving
 
 let stockIndexCache: Record<string, { data: GetCountryStockIndexResponse; ts: number }> = {};
 const STOCK_INDEX_CACHE_TTL = 3_600_000; // 1 hour (in-memory fallback)
+
+// ========================================================================
+// Massive (Polygon.io) fetcher for country indices
+// ========================================================================
+
+async function fetchIndexFromMassive(
+  ticker: string,
+  apiKey: string,
+): Promise<{ closes: number[]; currency: string } | null> {
+  try {
+    const now = new Date();
+    const end = now.toISOString().split('T')[0];
+    const start = new Date(now.getTime() - 35 * 86400000).toISOString().split('T')[0]; // ~5 weeks
+    const url = `https://api.massive.com/v2/aggs/ticker/${encodeURIComponent(ticker)}/range/1/day/${start}/${end}?adjusted=true&sort=asc&limit=30&apiKey=${apiKey}`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json() as { results?: Array<{ c: number }> };
+    const closes = data.results?.map(r => r.c).filter((v): v is number => v != null && v > 0);
+    if (!closes?.length || closes.length < 2) return null;
+    return { closes, currency: 'USD' };
+  } catch {
+    return null;
+  }
+}
 
 // ========================================================================
 // Handler
@@ -99,6 +132,30 @@ export async function getCountryStockIndex(
 
   try {
   const result = await cachedFetchJson<GetCountryStockIndexResponse>(redisKey, REDIS_CACHE_TTL, async () => {
+    // Try Massive first (for supported indices)
+    const massiveKey = process.env.MASSIVE_API_KEY;
+    const massiveTicker = COUNTRY_MASSIVE_TICKER[code];
+    if (massiveKey && massiveTicker) {
+      const massiveData = await fetchIndexFromMassive(massiveTicker, massiveKey);
+      if (massiveData && massiveData.closes.length >= 2) {
+        const closes = massiveData.closes.slice(-6);
+        const latest = closes[closes.length - 1]!;
+        const oldest = closes[0]!;
+        const weekChange = ((latest - oldest) / oldest) * 100;
+        return {
+          available: true,
+          code,
+          symbol: index.symbol,
+          indexName: index.name,
+          price: +latest.toFixed(2),
+          weekChangePercent: +weekChange.toFixed(2),
+          currency: massiveData.currency,
+          fetchedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    // Fallback to Yahoo Finance
     const encodedSymbol = encodeURIComponent(index.symbol);
     const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?range=1mo&interval=1d`;
 

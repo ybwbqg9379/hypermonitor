@@ -851,6 +851,11 @@ export class EventHandlerManager implements AppModule {
       },
     });
 
+    // Listen for basemap-reload events from embed bridge (theme sync)
+    window.addEventListener('embed:basemap-reload', () => {
+      this.ctx.map?.reloadBasemap();
+    });
+
     const mount = document.getElementById('unifiedSettingsMount');
     if (mount) {
       mount.appendChild(this.ctx.unifiedSettings.getButton());

@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve, dirname, extname } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
@@ -6,6 +6,17 @@ import { brotliCompress } from 'zlib';
 import { promisify } from 'util';
 import pkg from './package.json';
 import { VARIANT_META } from './src/config/variant-meta';
+
+// Load ALL .env.local variables into process.env so SSR server modules
+// (server/**/*.ts) can access them. Vite only populates import.meta.env
+// with VITE_* prefixed vars by default — this ensures API keys like
+// MASSIVE_API_KEY, FINNHUB_API_KEY, etc. are available in server handlers.
+const allEnv = loadEnv('development', process.cwd(), '');
+for (const [key, value] of Object.entries(allEnv)) {
+  if (process.env[key] === undefined) {
+    process.env[key] = value;
+  }
+}
 
 const isE2E = process.env.VITE_E2E === '1';
 const isDesktopBuild = process.env.VITE_DESKTOP_RUNTIME === '1';
