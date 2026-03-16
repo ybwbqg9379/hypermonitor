@@ -1,3 +1,60 @@
+export type DataSourceId =
+  | 'acled'
+  | 'opensky'
+  | 'wingbits'
+  | 'ais'
+  | 'usgs'
+  | 'gdelt'
+  | 'gdelt_doc'
+  | 'rss'
+  | 'polymarket'
+  | 'predictions'
+  | 'pizzint'
+  | 'outages'
+  | 'cyber_threats'
+  | 'weather'
+  | 'economic'
+  | 'oil'
+  | 'spending'
+  | 'firms'
+  | 'acled_conflict'
+  | 'ucdp'
+  | 'hapi'
+  | 'ucdp_events'
+  | 'unhcr'
+  | 'climate'
+  | 'worldpop'
+  | 'giving'
+  | 'bis'
+  | 'wto_trade'
+  | 'supply_chain'
+  | 'security_advisories'
+  | 'gpsjam'
+  | 'treasury_revenue';
+
+// AppContext lives in src/app/app-context.ts because it references
+// components, services, and utils (top-level aggregate type).
+
+export type HappyContentCategory =
+  | 'science-health'
+  | 'nature-wildlife'
+  | 'humanity-kindness'
+  | 'innovation-tech'
+  | 'climate-wins'
+  | 'culture-community';
+
+export interface TechHQ {
+  id: string;
+  company: string;
+  city: string;
+  country: string;
+  lat: number;
+  lon: number;
+  type: 'faang' | 'unicorn' | 'public';
+  employees?: number;
+  marketCap?: string;
+}
+
 export interface DeductContextDetail {
   query?: string;
   geoContext: string;
@@ -16,7 +73,19 @@ export interface Feed {
   lang?: string;             // ISO 2-letter code for filtering
 }
 
-export type { ThreatClassification, ThreatLevel, EventCategory } from '@/services/threat-classifier';
+export type ThreatLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export type EventCategory =
+  | 'conflict' | 'protest' | 'disaster' | 'diplomatic' | 'economic'
+  | 'terrorism' | 'cyber' | 'health' | 'environmental' | 'military'
+  | 'crime' | 'infrastructure' | 'tech' | 'general';
+
+export interface ThreatClassification {
+  level: ThreatLevel;
+  category: EventCategory;
+  confidence: number;
+  source: 'keyword' | 'ml' | 'llm';
+}
 
 export interface NewsItem {
   source: string;
@@ -26,14 +95,12 @@ export interface NewsItem {
   isAlert: boolean;
   monitorColor?: string;
   tier?: number;
-  threat?: import('@/services/threat-classifier').ThreatClassification;
+  threat?: ThreatClassification;
   lat?: number;
   lon?: number;
   locationName?: string;
   lang?: string;
-  // Happy variant: positive content category
-  happyCategory?: import('@/services/positive-classifier').HappyContentCategory;
-  // Image URL extracted from RSS media/enclosure tags
+  happyCategory?: HappyContentCategory;
   imageUrl?: string;
 }
 
@@ -62,7 +129,7 @@ export interface ClusteredEvent {
   isAlert: boolean;
   monitorColor?: string;
   velocity?: VelocityMetrics;
-  threat?: import('@/services/threat-classifier').ThreatClassification;
+  threat?: ThreatClassification;
   lat?: number;
   lon?: number;
   lang?: string;
@@ -564,6 +631,7 @@ export interface MapLayers {
   miningSites: boolean;
   processingPlants: boolean;
   commodityPorts: boolean;
+  webcams: boolean;
 }
 
 export interface AIDataCenter {
@@ -819,6 +887,7 @@ export interface MilitaryVessel {
   note?: string;
   usniRegion?: string;
   usniDeploymentStatus?: USNIDeploymentStatus;
+  usniHomePort?: string;
   usniStrikeGroup?: string;
   usniActivityDescription?: string;
   usniArticleUrl?: string;
@@ -1068,8 +1137,18 @@ export interface CascadeResult {
   }[];
 }
 
-// Re-export port types
-export type { Port, PortType } from '@/config/ports';
+export type PortType = 'container' | 'oil' | 'lng' | 'naval' | 'mixed' | 'bulk';
+
+export interface Port {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  country: string;
+  type: PortType;
+  rank?: number;
+  note: string;
+}
 
 // AI Regulation Types
 export type RegulationType = 'comprehensive' | 'sectoral' | 'voluntary' | 'proposed';
@@ -1314,7 +1393,7 @@ export interface MapTechHQCluster {
   lat: number;
   lon: number;
   count: number;
-  items: import('@/config/tech-geo').TechHQ[];
+  items: TechHQ[];
   city: string;
   country: string;
   primaryType: 'faang' | 'unicorn' | 'public';
@@ -1353,4 +1432,28 @@ export interface MapDatacenterCluster {
   existingCount?: number;
   plannedCount?: number;
   sampled?: boolean;
+}
+
+export interface CountryBriefSignals {
+  criticalNews: number;
+  protests: number;
+  militaryFlights: number;
+  militaryVessels: number;
+  outages: number;
+  aisDisruptions: number;
+  satelliteFires: number;
+  temporalAnomalies: number;
+  cyberThreats: number;
+  earthquakes: number;
+  displacementOutflow: number;
+  climateStress: number;
+  conflictEvents: number;
+  activeStrikes: number;
+  orefSirens: number;
+  orefHistory24h: number;
+  aviationDisruptions: number;
+  travelAdvisories: number;
+  travelAdvisoryMaxLevel: string | null;
+  gpsJammingHexes: number;
+  isTier1: boolean;
 }

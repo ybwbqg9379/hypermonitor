@@ -2,6 +2,7 @@ export const config = { runtime: 'edge' };
 
 import { ConvexHttpClient } from 'convex/browser';
 import { getCorsHeaders, isDisallowedOrigin } from './_cors.js';
+import { getClientIp, verifyTurnstile } from './_turnstile.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[+(]?\d[\d\s()./-]{4,23}\d$/;
@@ -34,29 +35,6 @@ function isRateLimited(ip) {
   }
   entry.count += 1;
   return entry.count > RATE_LIMIT;
-}
-
-async function verifyTurnstile(token, ip) {
-  const secret = process.env.TURNSTILE_SECRET_KEY;
-  if (!secret) {
-    const isLocal = (process.env.VERCEL_ENV ?? 'development') === 'development';
-    if (!isLocal) {
-      console.error('[contact] TURNSTILE_SECRET_KEY not set in production, rejecting');
-      return false;
-    }
-    return true;
-  }
-  try {
-    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ secret, response: token, remoteip: ip }),
-    });
-    const data = await res.json();
-    return data.success === true;
-  } catch {
-    return false;
-  }
 }
 
 async function sendNotificationEmail(name, email, organization, phone, message) {
@@ -117,12 +95,18 @@ function sanitizeForSubject(str, maxLen = 50) {
   return str.replace(/[\r\n\0]/g, '').slice(0, maxLen);
 }
 
+function jsonResponse(body, status, cors) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: cors
+      ? { 'Content-Type': 'application/json', ...cors }
+      : { 'Content-Type': 'application/json' },
+  });
+}
+
 export default async function handler(req) {
   if (isDisallowedOrigin(req)) {
-    return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonResponse({ error: 'Origin not allowed' }, 403);
   }
 
   const cors = getCorsHeaders(req, 'POST, OPTIONS');
@@ -132,84 +116,55 @@ export default async function handler(req) {
   }
 
   if (req.method !== 'POST') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Method not allowed' }, 405, cors);
   }
 
-  const ip =
-    req.headers.get('cf-connecting-ip') ||
-    req.headers.get('x-real-ip') ||
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    'unknown';
+  const ip = getClientIp(req);
 
   if (isRateLimited(ip)) {
-    return new Response(JSON.stringify({ error: 'Too many requests' }), {
-      status: 429,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Too many requests' }, 429, cors);
   }
 
   let body;
   try {
     body = await req.json();
   } catch {
-    return new Response(JSON.stringify({ error: 'Invalid JSON' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Invalid JSON' }, 400, cors);
   }
 
   if (body.website) {
-    return new Response(JSON.stringify({ status: 'sent' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ status: 'sent' }, 200, cors);
   }
 
-  const turnstileOk = await verifyTurnstile(body.turnstileToken || '', ip);
+  const turnstileOk = await verifyTurnstile({
+    token: body.turnstileToken || '',
+    ip,
+    logPrefix: '[contact]',
+    missingSecretPolicy: 'allow-in-development',
+  });
   if (!turnstileOk) {
-    return new Response(JSON.stringify({ error: 'Bot verification failed' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Bot verification failed' }, 403, cors);
   }
 
   const { email, name, organization, phone, message, source } = body;
 
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email)) {
-    return new Response(JSON.stringify({ error: 'Invalid email' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Invalid email' }, 400, cors);
   }
 
   const emailDomain = email.split('@')[1]?.toLowerCase();
   if (emailDomain && FREE_EMAIL_DOMAINS.has(emailDomain)) {
-    return new Response(JSON.stringify({ error: 'Please use your work email address' }), {
-      status: 422,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Please use your work email address' }, 422, cors);
   }
 
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    return new Response(JSON.stringify({ error: 'Name is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Name is required' }, 400, cors);
   }
   if (!organization || typeof organization !== 'string' || organization.trim().length === 0) {
-    return new Response(JSON.stringify({ error: 'Company is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Company is required' }, 400, cors);
   }
   if (!phone || typeof phone !== 'string' || !PHONE_RE.test(phone.trim())) {
-    return new Response(JSON.stringify({ error: 'Valid phone number is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Valid phone number is required' }, 400, cors);
   }
 
   const safeName = name.slice(0, MAX_FIELD);
@@ -220,10 +175,7 @@ export default async function handler(req) {
 
   const convexUrl = process.env.CONVEX_URL;
   if (!convexUrl) {
-    return new Response(JSON.stringify({ error: 'Service unavailable' }), {
-      status: 503,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Service unavailable' }, 503, cors);
   }
 
   try {
@@ -239,15 +191,9 @@ export default async function handler(req) {
 
     const emailSent = await sendNotificationEmail(safeName, email.trim(), safeOrg, safePhone, safeMsg);
 
-    return new Response(JSON.stringify({ status: 'sent', emailSent }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ status: 'sent', emailSent }, 200, cors);
   } catch (err) {
     console.error('[contact] error:', err);
-    return new Response(JSON.stringify({ error: 'Failed to send message' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...cors },
-    });
+    return jsonResponse({ error: 'Failed to send message' }, 500, cors);
   }
 }

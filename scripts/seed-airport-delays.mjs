@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLock, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey } from './_seed-utils.mjs';
+import { loadEnvFile, CHROME_UA, getRedisCredentials, acquireLock, releaseLock, withRetry, writeFreshnessMetadata, logSeedResult, verifySeedKey, extendExistingTtl } from './_seed-utils.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -135,7 +135,7 @@ async function redisSet(url, token, key, value, ttl) {
     body: JSON.stringify(cmd),
     signal: AbortSignal.timeout(10_000),
   });
-  return resp.ok;
+  if (!resp.ok) throw new Error(`Redis SET ${key} failed: HTTP ${resp.status}`);
 }
 
 async function seedFaaDelays() {
@@ -264,20 +264,30 @@ async function main() {
     process.exit(0);
   }
 
+  let faaData, notamData;
   try {
-    const faaData = await withRetry(seedFaaDelays);
-    const ok1 = await redisSet(url, token, FAA_CACHE_KEY, faaData, CACHE_TTL);
-    console.log(`  ${FAA_CACHE_KEY}: ${ok1 ? 'written' : 'FAILED'}`);
+    faaData = await withRetry(seedFaaDelays);
+    notamData = await seedNotamClosures();
+  } catch (err) {
+    await releaseLock('aviation:delays', runId);
+    console.error(`  FETCH FAILED: ${err.message || err}`);
+    await extendExistingTtl([FAA_CACHE_KEY, NOTAM_CACHE_KEY], CACHE_TTL);
+    console.log(`\n=== Failed gracefully (${Math.round(Date.now() - startMs)}ms) ===`);
+    process.exit(0);
+  }
+
+  try {
+    await redisSet(url, token, FAA_CACHE_KEY, faaData, CACHE_TTL);
+    console.log(`  ${FAA_CACHE_KEY}: written`);
     await writeFreshnessMetadata('aviation', 'faa', faaData.alerts.length, 'faa-asws');
 
     const verified1 = await verifySeedKey(FAA_CACHE_KEY);
     console.log(`  FAA verified: ${verified1 ? 'yes' : 'NO'}`);
 
     let notamCount = 0;
-    const notamData = await seedNotamClosures();
     if (notamData) {
-      const ok2 = await redisSet(url, token, NOTAM_CACHE_KEY, notamData, CACHE_TTL);
-      console.log(`  ${NOTAM_CACHE_KEY}: ${ok2 ? 'written' : 'FAILED'}`);
+      await redisSet(url, token, NOTAM_CACHE_KEY, notamData, CACHE_TTL);
+      console.log(`  ${NOTAM_CACHE_KEY}: written`);
       notamCount = notamData.closedIcaos.length;
       await writeFreshnessMetadata('aviation', 'notam', notamCount, 'icao-notam');
 
@@ -294,6 +304,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('FATAL:', err.message || err);
+  console.error(`PUBLISH FAILED: ${err.message || err}`);
   process.exit(1);
 });

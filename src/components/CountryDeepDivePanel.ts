@@ -1,4 +1,4 @@
-import type { CountryBriefSignals } from '@/app/app-context';
+import type { CountryBriefSignals } from '@/types';
 import { getSourcePropagandaRisk, getSourceTier } from '@/config/feeds';
 import { getCountryCentroid, ME_STRIKE_BOUNDS } from '@/services/country-geometry';
 import type { CountryScore } from '@/services/country-instability';

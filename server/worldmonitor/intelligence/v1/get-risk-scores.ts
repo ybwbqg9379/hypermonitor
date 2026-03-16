@@ -89,7 +89,7 @@ const ZONE_COUNTRY_MAP: Record<string, string[]> = {
   'Latin America': ['VE', 'CU', 'MX', 'BR'],
 };
 
-const ADVISORY_LEVELS: Record<string, 'do-not-travel' | 'reconsider' | 'caution'> = {
+const ADVISORY_LEVELS_FALLBACK: Record<string, 'do-not-travel' | 'reconsider' | 'caution'> = {
   UA: 'do-not-travel', SY: 'do-not-travel', YE: 'do-not-travel', MM: 'do-not-travel',
   IL: 'reconsider', IR: 'reconsider', PK: 'reconsider', VE: 'reconsider', CU: 'reconsider', MX: 'reconsider',
   RU: 'caution', TR: 'caution',
@@ -189,10 +189,11 @@ interface AuxiliarySources {
   gpsHexes: any[];
   iranEvents: any[];
   orefData: { activeAlertCount: number; historyCount24h: number } | null;
+  advisories: { byCountry: Record<string, 'do-not-travel' | 'reconsider' | 'caution'> } | null;
 }
 
 async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
-  const [ucdpRaw, outagesRaw, climateRaw, cyberRaw, firesRaw, gpsRaw, iranRaw, orefRaw] = await Promise.all([
+  const [ucdpRaw, outagesRaw, climateRaw, cyberRaw, firesRaw, gpsRaw, iranRaw, orefRaw, advisoriesRaw] = await Promise.all([
     getCachedJson('conflict:ucdp-events:v1', true).catch(() => null),
     getCachedJson('infra:outages:v1', true).catch(() => null),
     getCachedJson('climate:anomalies:v1', true).catch(() => null),
@@ -201,6 +202,7 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     getCachedJson('intelligence:gpsjam:v2', true).catch(() => null),
     getCachedJson('conflict:iran-events:v1', true).catch(() => null),
     getCachedJson('relay:oref:history:v1', true).catch(() => null),
+    getCachedJson('intelligence:advisories:v1', true).catch(() => null),
   ]);
   const arr = (v: any, field?: string, maxLen = 10000) => {
     let a: any[];
@@ -225,6 +227,9 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     gpsHexes: arr(gpsRaw, 'hexes'),
     iranEvents: arr(iranRaw, 'events'),
     orefData,
+    advisories: advisoriesRaw && typeof advisoriesRaw === 'object' && (advisoriesRaw as any).byCountry
+      ? { byCountry: (advisoriesRaw as any).byCountry }
+      : null,
   };
 }
 
@@ -235,7 +240,8 @@ export function computeCIIScores(
   const data: Record<string, CountrySignals> = {};
   for (const code of Object.keys(TIER1_COUNTRIES)) {
     data[code] = emptySignals();
-    data[code].advisoryLevel = ADVISORY_LEVELS[code] || null;
+    const liveLevel = aux.advisories?.byCountry?.[code] ?? null;
+    data[code].advisoryLevel = liveLevel || ADVISORY_LEVELS_FALLBACK[code] || null;
   }
 
   // --- ACLED ingestion with fatality split ---
@@ -328,9 +334,9 @@ export function computeCIIScores(
   }
 
   // --- OREF (IL only) ---
-  if (aux.orefData && data['IL']) {
-    data['IL'].orefAlertCount = aux.orefData.activeAlertCount;
-    data['IL'].orefHistoryCount24h = aux.orefData.historyCount24h;
+  if (aux.orefData && data.IL) {
+    data.IL.orefAlertCount = aux.orefData.activeAlertCount;
+    data.IL.orefHistoryCount24h = aux.orefData.historyCount24h;
   }
 
   // --- Scoring ---
@@ -479,7 +485,7 @@ export async function getRiskScores(
 
   const stale = (await getCachedJson(RISK_STALE_CACHE_KEY)) as GetRiskScoresResponse | null;
   if (stale) return stale;
-  const emptyAux: AuxiliarySources = { ucdpEvents: [], outages: [], climate: [], cyber: [], fires: [], gpsHexes: [], iranEvents: [], orefData: null };
+  const emptyAux: AuxiliarySources = { ucdpEvents: [], outages: [], climate: [], cyber: [], fires: [], gpsHexes: [], iranEvents: [], orefData: null, advisories: null };
   const ciiScores = computeCIIScores([], emptyAux);
   return { ciiScores, strategicRisks: computeStrategicRisks(ciiScores) };
 }

@@ -275,7 +275,8 @@
     "techReadiness": "テック準備度指数",
     "gccInvestments": "GCC投資",
     "geoHubs": "地政学ハブ",
-    "liveWebcams": "ライブカメラ",
+    "liveYouTube": "ライブカメラ",
+    "pinnedWebcams": "Pinned Webcams",
     "gulfEconomies": "湾岸経済",
     "gulfIndices": "湾岸指数",
     "gulfCurrencies": "湾岸通貨",
@@ -770,6 +771,13 @@
       "spikeAlert": "スパイク検出 — 料金が52週平均を大幅に上回っています（週次）",
       "warnings": "件の警告",
       "aisDisruptions": "AIS途絶",
+      "routingAction": "Routing",
+      "disruption": "Disruption",
+      "vessels": "vessels",
+      "incidents7d": "incidents (7d)",
+      "corridorDisruption": "Corridor Disruption",
+      "corridor": "Corridor",
+      "loadingCorridors": "Loading corridor data...",
       "mineral": "鉱物",
       "topProducers": "主要生産国",
       "risk": "リスク",
@@ -816,7 +824,10 @@
       "yes": "はい",
       "no": "いいえ",
       "vol": "出来高",
-      "closes": "締切"
+      "closes": "締切",
+      "leanYes": "Lean Yes",
+      "leanNo": "Lean No",
+      "tossUp": "Toss-up"
     },
     "stablecoins": {
       "pegHealth": "ペグ健全性",
@@ -1531,7 +1542,9 @@
       "filterAlerts": "警報",
       "filterOsint": "OSINT",
       "filterPolitics": "政治",
-      "filterMiddleeast": "中東"
+      "filterMiddleeast": "中東",
+      "live": "ライブ",
+      "viewSource": "ソースを見る"
     },
     "investments": {
       "infoTooltip": "サウジアラビアとUAEによるグローバル重要インフラへの外国直接投資データベース。行をクリックするとマップ上の投資先にズーム。",
@@ -2074,7 +2087,12 @@
       "usniIntel": "USNI Intel",
       "usniSource": "Source: USNI News Fleet Tracker",
       "approximatePosition": "Position approximate — based on USNI weekly report, not real-time AIS.",
-      "darkDescription": "⚠ 艦艇がAIS信号を喪失 — 機密作戦の可能性。"
+      "darkDescription": "⚠ 艦艇がAIS信号を喪失 — 機密作戦の可能性。",
+      "recentTracking": "Recent Tracking",
+      "lastReport": "LATEST",
+      "nearChokepoint": "NEAR CHOKEPOINT",
+      "nearBase": "NEAR BASE",
+      "lastSeen": "LAST SEEN"
     },
     "militaryCluster": {
       "flightActivity": {

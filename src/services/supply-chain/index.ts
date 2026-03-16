@@ -49,6 +49,8 @@ export async function fetchShippingRates(): Promise<GetShippingRatesResponse> {
 
 export async function fetchChokepointStatus(): Promise<GetChokepointStatusResponse> {
   const hydrated = getHydratedData('chokepoints') as GetChokepointStatusResponse | undefined;
+  // Transit summaries are already folded into the chokepoint payload server-side.
+  getHydratedData('chokepointTransits');
   if (hydrated?.chokepoints?.length) return hydrated;
 
   try {

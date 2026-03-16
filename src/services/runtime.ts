@@ -1,6 +1,14 @@
 import { SITE_VARIANT } from '@/config/variant';
 
-const WS_API_URL = import.meta.env.VITE_WS_API_URL || '';
+const ENV = (() => {
+  try {
+    return import.meta.env ?? {};
+  } catch {
+    return {} as Record<string, string | undefined>;
+  }
+})();
+
+const WS_API_URL = ENV.VITE_WS_API_URL || '';
 const DEFAULT_WEB_API_URL = 'https://api.worldmonitor.app';
 const KEYED_CLOUD_API_PATTERN = /^\/api\/(?:[^/]+\/v1\/|bootstrap(?:\?|$)|polymarket(?:\?|$)|ais-snapshot(?:\?|$))/;
 
@@ -13,7 +21,7 @@ const DEFAULT_REMOTE_HOSTS: Record<string, string> = {
 };
 
 const DEFAULT_LOCAL_API_PORT = 46123;
-const FORCE_DESKTOP_RUNTIME = import.meta.env.VITE_DESKTOP_RUNTIME === '1';
+const FORCE_DESKTOP_RUNTIME = ENV.VITE_DESKTOP_RUNTIME === '1';
 
 let _resolvedPort: number | null = null;
 let _portPromise: Promise<number> | null = null;
@@ -103,7 +111,7 @@ export function getApiBaseUrl(): string {
     return '';
   }
 
-  const configuredBaseUrl = import.meta.env.VITE_TAURI_API_BASE_URL;
+  const configuredBaseUrl = ENV.VITE_TAURI_API_BASE_URL;
   if (configuredBaseUrl) {
     return normalizeBaseUrl(configuredBaseUrl);
   }
@@ -143,7 +151,7 @@ export function getCanonicalApiOrigin(): string {
 }
 
 export function getRemoteApiBaseUrl(): string {
-  const configuredRemoteBase = import.meta.env.VITE_TAURI_REMOTE_API_BASE_URL;
+  const configuredRemoteBase = ENV.VITE_TAURI_REMOTE_API_BASE_URL;
   if (configuredRemoteBase) {
     return normalizeBaseUrl(configuredRemoteBase);
   }
@@ -207,7 +215,7 @@ const APP_HOSTS = new Set([
   'api.worldmonitor.app',
   'localhost',
   '127.0.0.1',
-  ...extractHostnames(WS_API_URL, import.meta.env.VITE_WS_RELAY_URL),
+  ...extractHostnames(WS_API_URL, ENV.VITE_WS_RELAY_URL),
 ]);
 
 function isAppOriginUrl(urlStr: string): boolean {
@@ -220,26 +228,29 @@ function isAppOriginUrl(urlStr: string): boolean {
   }
 }
 
+function toPathAndSearch(url: string | URL): string {
+  const u = typeof url === 'string' ? new URL(url) : url;
+  return `${u.pathname}${u.search}`;
+}
+
 function getApiTargetFromRequestInput(input: RequestInfo | URL): string | null {
   if (typeof input === 'string') {
     if (input.startsWith('/')) return input;
     if (isAppOriginUrl(input)) {
-      const u = new URL(input);
-      return `${u.pathname}${u.search}`;
+      return toPathAndSearch(input);
     }
     return null;
   }
 
   if (input instanceof URL) {
     if (isAppOriginUrl(input.href)) {
-      return `${input.pathname}${input.search}`;
+      return toPathAndSearch(input);
     }
     return null;
   }
 
   if (isAppOriginUrl(input.url)) {
-    const u = new URL(input.url);
-    return `${u.pathname}${u.search}`;
+    return toPathAndSearch(input.url);
   }
   return null;
 }

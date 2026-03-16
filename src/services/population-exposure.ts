@@ -8,6 +8,13 @@ const client = new DisplacementServiceClient(getRpcBaseUrl(), { fetch: (...args)
 
 const countriesBreaker = createCircuitBreaker<GetPopulationExposureResponse>({ name: 'WorldPop Countries', cacheTtlMs: 30 * 60 * 1000, persistCache: true });
 
+const exposureBreaker = createCircuitBreaker<ExposureResponse | null>({
+  name: 'PopExposure',
+  cacheTtlMs: 6 * 60 * 60 * 1000,
+  persistCache: true,
+  maxCacheEntries: 64,
+});
+
 export async function fetchCountryPopulations(): Promise<CountryPopulation[]> {
   const result = await countriesBreaker.execute(async () => {
     return client.getPopulationExposure({ mode: 'countries', lat: 0, lon: 0, radius: 0 });
@@ -24,13 +31,15 @@ interface ExposureResponse {
 }
 
 export async function fetchExposure(lat: number, lon: number, radiusKm: number): Promise<ExposureResponse | null> {
-  try {
-    const result = await client.getPopulationExposure({ mode: 'exposure', lat, lon, radius: radiusKm });
-    if (!result.exposure) return null;
-    return result.exposure;
-  } catch {
-    return null;
-  }
+  const cacheKey = `${lat.toFixed(4)},${lon.toFixed(4)},${radiusKm}`;
+  return exposureBreaker.execute(
+    async () => {
+      const result = await client.getPopulationExposure({ mode: 'exposure', lat, lon, radius: radiusKm });
+      return result.exposure ?? null;
+    },
+    null,
+    { cacheKey },
+  );
 }
 
 interface EventForExposure {

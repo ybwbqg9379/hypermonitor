@@ -22,7 +22,7 @@ function fnv1a(str: string): number {
 
 function validateBbox(bbox: string): [number, number, number, number] | null {
   const parts = bbox.split(',').map(Number);
-  if (parts.length !== 4 || parts.some(isNaN)) return null;
+  if (parts.length !== 4 || parts.some(Number.isNaN)) return null;
   const w = parts[0]!;
   const s = parts[1]!;
   const e = parts[2]!;
@@ -75,14 +75,14 @@ function s3ToHttps(url: string): string {
 function mapFeature(f: StacFeature): ImageryScene {
   const props = f.properties;
   const thumbnail = s3ToHttps(
-    f.assets?.['thumbnail']?.href
-    ?? f.assets?.['overview']?.href
+    f.assets?.thumbnail?.href
+    ?? f.assets?.overview?.href
     ?? f.links?.find(l => l.rel === 'thumbnail')?.href
     ?? '',
   );
-  const asset = f.assets?.['visual']?.href
-    ?? f.assets?.['vv']?.href
-    ?? f.assets?.['vh']?.href
+  const asset = f.assets?.visual?.href
+    ?? f.assets?.vv?.href
+    ?? f.assets?.vh?.href
     ?? '';
   const satellite = props.constellation ?? props.platform ?? 'unknown';
   const mode = props['sar:instrument_mode'] ?? (satellite.includes('sentinel-2') ? 'MSI' : '');

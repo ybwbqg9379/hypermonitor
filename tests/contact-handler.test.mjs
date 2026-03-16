@@ -177,7 +177,7 @@ describe('api/contact', () => {
       delete process.env.TURNSTILE_SECRET_KEY;
       process.env.VERCEL_ENV = 'development';
       let convexCalled = false;
-      globalThis.fetch = async (url, opts) => {
+      globalThis.fetch = async (url, _opts) => {
         if (url.includes('fake-convex')) {
           convexCalled = true;
           return new Response(JSON.stringify({ status: 'success', value: { status: 'sent' } }));

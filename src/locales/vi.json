@@ -275,7 +275,8 @@
     "techReadiness": "Chỉ số Sẵn sàng Công nghệ",
     "gccInvestments": "Đầu tư GCC",
     "geoHubs": "Trung tâm Địa chính trị",
-    "liveWebcams": "Webcam Trực tiếp",
+    "liveYouTube": "Webcam Trực tiếp",
+    "pinnedWebcams": "Pinned Webcams",
     "gulfEconomies": "Kinh tế vùng Vịnh",
     "gulfIndices": "Chỉ số vùng Vịnh",
     "gulfCurrencies": "Tiền tệ vùng Vịnh",
@@ -770,6 +771,13 @@
       "spikeAlert": "Phát hiện đột biến — giá cao hơn đáng kể so với trung bình 52 tuần (hàng tuần)",
       "warnings": "cảnh báo",
       "aisDisruptions": "Gián đoạn AIS",
+      "routingAction": "Routing",
+      "disruption": "Disruption",
+      "vessels": "vessels",
+      "incidents7d": "incidents (7d)",
+      "corridorDisruption": "Corridor Disruption",
+      "corridor": "Corridor",
+      "loadingCorridors": "Loading corridor data...",
       "mineral": "Khoáng sản",
       "topProducers": "Nhà sản xuất hàng đầu",
       "risk": "Rủi ro",
@@ -816,7 +824,10 @@
       "yes": "Có",
       "no": "Không",
       "vol": "KL",
-      "closes": "Đóng"
+      "closes": "Đóng",
+      "leanYes": "Lean Yes",
+      "leanNo": "Lean No",
+      "tossUp": "Toss-up"
     },
     "stablecoins": {
       "pegHealth": "Sức khỏe Neo giá",
@@ -1531,7 +1542,9 @@
       "filterAlerts": "Cảnh báo",
       "filterOsint": "OSINT",
       "filterPolitics": "Chính trị",
-      "filterMiddleeast": "Trung Đông"
+      "filterMiddleeast": "Trung Đông",
+      "live": "TRỰC TIẾP",
+      "viewSource": "Xem nguồn"
     },
     "investments": {
       "infoTooltip": "Cơ sở dữ liệu đầu tư trực tiếp nước ngoài của Ả Rập Saudi và UAE vào hạ tầng quan trọng toàn cầu. Nhấp vào hàng để bay đến vị trí đầu tư trên bản đồ.",
@@ -2074,7 +2087,12 @@
       "usniIntel": "Tình báo USNI",
       "usniSource": "Nguồn: USNI News Fleet Tracker",
       "approximatePosition": "Vị trí ước tính — dựa trên báo cáo hàng tuần USNI, không phải AIS thời gian thực.",
-      "darkDescription": "⚠ Tàu đã mất tín hiệu - mất tín hiệu AIS. Có thể cho thấy hoạt động nhạy cảm."
+      "darkDescription": "⚠ Tàu đã mất tín hiệu - mất tín hiệu AIS. Có thể cho thấy hoạt động nhạy cảm.",
+      "recentTracking": "Recent Tracking",
+      "lastReport": "LATEST",
+      "nearChokepoint": "NEAR CHOKEPOINT",
+      "nearBase": "NEAR BASE",
+      "lastSeen": "LAST SEEN"
     },
     "militaryCluster": {
       "flightActivity": {

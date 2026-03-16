@@ -43,6 +43,14 @@ import { DataLoaderManager } from '@/app/data-loader';
 import { EventHandlerManager } from '@/app/event-handlers';
 import { resolveUserRegion, resolvePreciseUserCoordinates, type PreciseCoordinates } from '@/utils/user-location';
 import { showProBanner } from '@/components/ProBanner';
+import {
+  CorrelationEngine,
+  militaryAdapter,
+  escalationAdapter,
+  economicAdapter,
+  disasterAdapter,
+} from '@/services/correlation-engine';
+import type { CorrelationPanel } from '@/components/CorrelationPanel';
 
 const CYBER_LAYER_ENABLED = import.meta.env.VITE_ENABLE_CYBER_LAYER === 'true';
 
@@ -83,6 +91,19 @@ export class App {
     return panelIds.some((panelId) => this.isPanelNearViewport(panelId, marginPx));
   }
 
+  private shouldRefreshIntelligence(): boolean {
+    return this.isAnyPanelNearViewport(['cii', 'strategic-risk', 'strategic-posture'])
+      || !!this.state.countryBriefPage?.isVisible();
+  }
+
+  private shouldRefreshFirms(): boolean {
+    return this.isPanelNearViewport('satellite-fires');
+  }
+
+  private shouldRefreshCorrelation(): boolean {
+    return this.isAnyPanelNearViewport(['military-correlation', 'escalation-correlation', 'economic-correlation', 'disaster-correlation']);
+  }
+
   private async primeVisiblePanelData(forceAll = false): Promise<void> {
     const tasks: Promise<unknown>[] = [];
     const primeTask = (key: string, task: () => Promise<unknown>): void => {
@@ -115,11 +136,11 @@ export class App {
       if (panel) primeTask('etf-flows', () => panel.fetchData());
     }
     if (shouldPrime('stablecoins')) {
-      const panel = this.state.panels['stablecoins'] as StablecoinPanel | undefined;
+      const panel = this.state.panels.stablecoins as StablecoinPanel | undefined;
       if (panel) primeTask('stablecoins', () => panel.fetchData());
     }
     if (shouldPrime('telegram-intel')) {
-      primeTask('telegramIntel', () => this.dataLoader.loadTelegramIntel());
+      primeTask('telegram-intel', () => this.dataLoader.loadTelegramIntel());
     }
     if (shouldPrime('gulf-economies')) {
       const panel = this.state.panels['gulf-economies'] as GulfEconomiesPanel | undefined;
@@ -202,6 +223,29 @@ export class App {
         STORAGE_KEYS.panels,
         DEFAULT_PANELS
       );
+
+      // One-time migration: preserve user preferences across panel key renames.
+      const PANEL_KEY_RENAMES_MIGRATION_KEY = 'worldmonitor-panel-key-renames-v2.6';
+      if (!localStorage.getItem(PANEL_KEY_RENAMES_MIGRATION_KEY)) {
+        const keyRenames: Array<[string, string]> = [
+          ['live-youtube', 'live-webcams'],
+          ['pinned-webcams', 'windy-webcams'],
+        ];
+        let migrated = false;
+        for (const [legacyKey, nextKey] of keyRenames) {
+          if (!panelSettings[legacyKey] || panelSettings[nextKey]) continue;
+          panelSettings[nextKey] = {
+            ...DEFAULT_PANELS[nextKey],
+            ...panelSettings[legacyKey],
+            name: DEFAULT_PANELS[nextKey]?.name ?? panelSettings[legacyKey].name,
+          };
+          delete panelSettings[legacyKey];
+          migrated = true;
+        }
+        if (migrated) saveToStorage(STORAGE_KEYS.panels, panelSettings);
+        localStorage.setItem(PANEL_KEY_RENAMES_MIGRATION_KEY, 'done');
+      }
+
       // Merge in any new panels that didn't exist when settings were saved
       for (const [key, config] of Object.entries(DEFAULT_PANELS)) {
         if (!(key in panelSettings)) {
@@ -308,7 +352,7 @@ export class App {
       }
     }
 
-    let initialUrlState: ParsedMapUrlState | null = parseMapUrlState(window.location.search, mapLayers);
+    const initialUrlState: ParsedMapUrlState | null = parseMapUrlState(window.location.search, mapLayers);
     if (initialUrlState.layers) {
       mapLayers = sanitizeLayersForVariant(initialUrlState.layers, currentVariant as MapVariant);
       initialUrlState.layers = mapLayers;
@@ -374,6 +418,8 @@ export class App {
       exportPanel: null,
       unifiedSettings: null,
       pizzintIndicator: null,
+      correlationEngine: null,
+      llmStatusIndicator: null,
       countryBriefPage: null,
       countryTimeline: null,
       positivePanel: null,
@@ -555,7 +601,16 @@ export class App {
     this.eventHandlers.setupPlaybackControl();
     this.eventHandlers.setupStatusPanel();
     this.eventHandlers.setupPizzIntIndicator();
+    this.eventHandlers.setupLlmStatusIndicator();
     this.eventHandlers.setupExportPanel();
+
+    // Correlation engine
+    const correlationEngine = new CorrelationEngine();
+    correlationEngine.registerAdapter(militaryAdapter);
+    correlationEngine.registerAdapter(escalationAdapter);
+    correlationEngine.registerAdapter(economicAdapter);
+    correlationEngine.registerAdapter(disasterAdapter);
+    this.state.correlationEngine = correlationEngine;
     this.eventHandlers.setupUnifiedSettings();
 
     // Phase 4: SearchManager, MapLayerHandlers, CountryIntel
@@ -584,10 +639,26 @@ export class App {
     // Phase 6: Data loading
     this.dataLoader.syncDataFreshnessWithLayers();
     await preloadCountryGeometry();
-    await this.dataLoader.loadAllData(true);
-    await this.primeVisiblePanelData(true);
+    // Prime panel-specific data concurrently with bulk loading.
+    // primeVisiblePanelData owns ETF, Stablecoins, Gulf Economies, etc. that
+    // are NOT part of loadAllData. Running them in parallel prevents those
+    // panels from being blocked when a loadAllData batch is slow.
     window.addEventListener('scroll', this.handleViewportPrime, { passive: true });
     window.addEventListener('resize', this.handleViewportPrime);
+    await Promise.all([
+      this.dataLoader.loadAllData(true),
+      this.primeVisiblePanelData(true),
+    ]);
+
+    // Initial correlation engine run
+    if (this.state.correlationEngine) {
+      void this.state.correlationEngine.run(this.state).then(() => {
+        for (const domain of ['military', 'escalation', 'economic', 'disaster'] as const) {
+          const panel = this.state.panels[`${domain}-correlation`] as CorrelationPanel | undefined;
+          panel?.updateCards(this.state.correlationEngine!.getCards(domain));
+        }
+      });
+    }
 
     startLearning();
 
@@ -698,6 +769,12 @@ export class App {
           intervalMs: REFRESH_INTERVALS.predictions,
           condition: () => this.isPanelNearViewport('polymarket'),
         },
+        {
+          name: 'forecasts',
+          fn: () => this.dataLoader.loadForecasts(),
+          intervalMs: REFRESH_INTERVALS.forecasts,
+          condition: () => this.isPanelNearViewport('forecast'),
+        },
         { name: 'pizzint', fn: () => this.dataLoader.loadPizzInt(), intervalMs: 10 * 60 * 1000 },
         { name: 'natural', fn: () => this.dataLoader.loadNatural(), intervalMs: 60 * 60 * 1000, condition: () => this.state.mapLayers.natural },
         { name: 'weather', fn: () => this.dataLoader.loadWeatherAlerts(), intervalMs: 10 * 60 * 1000, condition: () => this.state.mapLayers.weather },
@@ -705,7 +782,7 @@ export class App {
         { name: 'oil', fn: () => this.dataLoader.loadOilAnalytics(), intervalMs: 6 * 60 * 60 * 1000, condition: () => this.isPanelNearViewport('economic') },
         { name: 'spending', fn: () => this.dataLoader.loadGovernmentSpending(), intervalMs: 6 * 60 * 60 * 1000, condition: () => this.isPanelNearViewport('economic') },
         { name: 'bis', fn: () => this.dataLoader.loadBisData(), intervalMs: 6 * 60 * 60 * 1000, condition: () => this.isPanelNearViewport('economic') },
-        { name: 'firms', fn: () => this.dataLoader.loadFirmsData(), intervalMs: 30 * 60 * 1000 },
+        { name: 'firms', fn: () => this.dataLoader.loadFirmsData(), intervalMs: 30 * 60 * 1000, condition: () => this.shouldRefreshFirms() },
         { name: 'ais', fn: () => this.dataLoader.loadAisSignals(), intervalMs: REFRESH_INTERVALS.ais, condition: () => this.state.mapLayers.ais },
         { name: 'cables', fn: () => this.dataLoader.loadCableActivity(), intervalMs: 30 * 60 * 1000, condition: () => this.state.mapLayers.cables },
         { name: 'cableHealth', fn: () => this.dataLoader.loadCableHealth(), intervalMs: 2 * 60 * 60 * 1000, condition: () => this.state.mapLayers.cables },
@@ -749,7 +826,7 @@ export class App {
     );
     this.refreshScheduler.scheduleRefresh(
       'stablecoins',
-      () => (this.state.panels['stablecoins'] as StablecoinPanel).fetchData(),
+      () => (this.state.panels.stablecoins as StablecoinPanel).fetchData(),
       15 * 60_000,
       () => this.isPanelNearViewport('stablecoins')
     );
@@ -769,18 +846,18 @@ export class App {
       'strategic-posture',
       () => (this.state.panels['strategic-posture'] as StrategicPosturePanel).refresh(),
       15 * 60_000,
-      () => !!this.state.panels['strategic-posture']
+      () => this.isPanelNearViewport('strategic-posture')
     );
     this.refreshScheduler.scheduleRefresh(
       'strategic-risk',
       () => (this.state.panels['strategic-risk'] as StrategicRiskPanel).refresh(),
       5 * 60_000,
-      () => !!this.state.panels['strategic-risk']
+      () => this.isPanelNearViewport('strategic-risk')
     );
 
     // Server-side temporal anomalies (news + satellite_fires)
     if (SITE_VARIANT !== 'happy') {
-      this.refreshScheduler.scheduleRefresh('temporalBaseline', () => this.dataLoader.refreshTemporalBaseline(), 600_000);
+      this.refreshScheduler.scheduleRefresh('temporalBaseline', () => this.dataLoader.refreshTemporalBaseline(), 600_000, () => this.shouldRefreshIntelligence());
     }
 
     // WTO trade policy data — annual data, poll every 10 min to avoid hammering upstream
@@ -812,7 +889,23 @@ export class App {
         if (military) this.state.intelligenceCache.military = military;
         if (iranEvents) this.state.intelligenceCache.iranEvents = iranEvents;
         return this.dataLoader.loadIntelligenceSignals();
-      }, 15 * 60 * 1000);
+      }, 15 * 60 * 1000, () => this.shouldRefreshIntelligence());
     }
+
+    // Correlation engine refresh
+    this.refreshScheduler.scheduleRefresh(
+      'correlation-engine',
+      async () => {
+        const engine = this.state.correlationEngine;
+        if (!engine) return;
+        await engine.run(this.state);
+        for (const domain of ['military', 'escalation', 'economic', 'disaster'] as const) {
+          const panel = this.state.panels[`${domain}-correlation`] as CorrelationPanel | undefined;
+          panel?.updateCards(engine.getCards(domain));
+        }
+      },
+      5 * 60 * 1000,
+      () => this.shouldRefreshCorrelation(),
+    );
   }
 }

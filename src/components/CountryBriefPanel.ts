@@ -1,4 +1,4 @@
-import type { CountryBriefSignals } from '@/app/app-context';
+import type { CountryBriefSignals } from '@/types';
 import type { CountryScore } from '@/services/country-instability';
 import type { PredictionMarket } from '@/services/prediction';
 import type { NewsItem } from '@/types';

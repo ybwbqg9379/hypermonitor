@@ -15,6 +15,7 @@ export interface PanelOptions {
   infoTooltip?: string;
   premium?: 'locked' | 'enhanced';
   closable?: boolean;
+  defaultRowSpan?: number;
 }
 
 const PANEL_SPANS_KEY = 'worldmonitor-panel-spans';
@@ -299,10 +300,15 @@ export class Panel {
     this.element.appendChild(this.colResizeHandle);
     this.setupColResizeHandlers();
 
-    // Restore saved span
+    // Apply default row span (before restore, so saved preferences win)
+    if (options.defaultRowSpan && options.defaultRowSpan > 1) {
+      this.element.classList.add(`span-${options.defaultRowSpan}`);
+    }
+
+    // Restore saved span (overrides default)
     const savedSpans = loadPanelSpans();
     const savedSpan = savedSpans[this.panelId];
-    if (savedSpan && savedSpan > 1) {
+    if (savedSpan !== undefined) {
       setSpanClass(this.element, savedSpan);
     }
 
@@ -719,7 +725,7 @@ export class Panel {
     const children: (HTMLElement | string)[] = [radarEl, msgEl];
 
     if (this.retryCallback) {
-      const backoffSeconds = autoRetrySeconds ?? Math.min(15 * Math.pow(2, this.retryAttempt), 180);
+      const backoffSeconds = autoRetrySeconds ?? Math.min(15 * 2 ** this.retryAttempt, 180);
       this.retryAttempt++;
       let remaining = Math.round(backoffSeconds);
       const countdownEl = h('div', { className: 'panel-error-countdown' },

@@ -127,7 +127,7 @@ export class MacroSignalsPanel extends Panel {
   private lastTimestamp = '';
 
   constructor() {
-    super({ id: 'macro-signals', title: t('panels.macroSignals'), showCount: false });
+    super({ id: 'macro-signals', title: t('panels.macroSignals'), showCount: false, infoTooltip: t('components.macroSignals.infoTooltip') });
   }
 
   public async fetchData(): Promise<boolean> {
@@ -150,7 +150,7 @@ export class MacroSignalsPanel extends Panel {
       if (this.isAbortError(err)) return false;
       if (!this.element?.isConnected) return false;
       console.warn('[MacroSignals] Fetch error:', err);
-      this.error = null;
+      this.error = t('common.noDataShort');
     }
     this.loading = false;
     this.renderPanel();

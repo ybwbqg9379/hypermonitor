@@ -270,7 +270,8 @@
     "techHubs": "Gorące centra technologiczne",
     "gccInvestments": "Inwestycje GCC",
     "geoHubs": "Geopolitical Hotspots",
-    "liveWebcams": "Kamery na Żywo",
+    "liveYouTube": "Kamery na Żywo",
+    "pinnedWebcams": "Pinned Webcams",
     "securityAdvisories": "Ostrzeżenia Bezpieczeństwa",
     "orefSirens": "Israel Sirens",
     "telegramIntel": "Wywiad Telegram",
@@ -789,7 +790,10 @@
       "yes": "Tak",
       "no": "NIE",
       "vol": "Tom",
-      "closes": "Zamyka się"
+      "closes": "Zamyka się",
+      "leanYes": "Lean Yes",
+      "leanNo": "Lean No",
+      "tossUp": "Toss-up"
     },
     "deckgl": {
       "views": {
@@ -1318,7 +1322,9 @@
       "filterAlerts": "Alarmy",
       "filterOsint": "OSINT",
       "filterPolitics": "Polityka",
-      "filterMiddleeast": "Bliski Wschód"
+      "filterMiddleeast": "Bliski Wschód",
+      "live": "NA ŻYWO",
+      "viewSource": "Zobacz źródło"
     },
     "investments": {
       "infoTooltip": "Baza danych bezpośrednich inwestycji zagranicznych Arabii Saudyjskiej i Zjednoczonych Emiratów Arabskich w globalną infrastrukturę krytyczną. Kliknij wiersz, aby przejść do inwestycji na mapie.",
@@ -1663,6 +1669,13 @@
     "supplyChain": {
       "chokepoints": "Wąskie gardła",
       "fredKeyMissing": "Klucz API FRED wymagany do stawek frachtowych — dodaj go w Ustawieniach. Wąskie gardła i minerały dostępne bez klucza.",
+      "routingAction": "Routing",
+      "disruption": "Disruption",
+      "vessels": "vessels",
+      "incidents7d": "incidents (7d)",
+      "corridorDisruption": "Corridor Disruption",
+      "corridor": "Corridor",
+      "loadingCorridors": "Loading corridor data...",
       "mineral": "Minerał",
       "minerals": "Minerały",
       "noChokepoints": "Dane o wąskich gardłach ładują się...",
@@ -2066,7 +2079,12 @@
       "usniIntel": "USNI Intel",
       "usniSource": "Source: USNI News Fleet Tracker",
       "approximatePosition": "Position approximate — based on USNI weekly report, not real-time AIS.",
-      "darkDescription": "⚠ Na statku zgasło światło – utracono sygnał AIS. Może wskazywać wrażliwe operacje."
+      "darkDescription": "⚠ Na statku zgasło światło – utracono sygnał AIS. Może wskazywać wrażliwe operacje.",
+      "recentTracking": "Recent Tracking",
+      "lastReport": "LATEST",
+      "nearChokepoint": "NEAR CHOKEPOINT",
+      "nearBase": "NEAR BASE",
+      "lastSeen": "LAST SEEN"
     },
     "militaryCluster": {
       "flightActivity": {

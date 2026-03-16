@@ -275,7 +275,8 @@
     "techReadiness": "Teknoloji Hazirlik Endeksi",
     "gccInvestments": "GCC Yatirimlari",
     "geoHubs": "Jeopolitik Merkezler",
-    "liveWebcams": "Canli Web Kameralari",
+    "liveYouTube": "Canli Web Kameralari",
+    "pinnedWebcams": "Pinned Webcams",
     "gulfEconomies": "Körfez Ekonomileri",
     "gulfIndices": "Körfez Endeksleri",
     "gulfCurrencies": "Körfez Para Birimleri",
@@ -770,6 +771,13 @@
       "spikeAlert": "Ani artış tespit edildi — ücret 52 haftalık ortalamanın önemli ölçüde üzerinde (haftalık)",
       "warnings": "uyarı(lar)",
       "aisDisruptions": "AIS aksaklık(lar)ı",
+      "routingAction": "Routing",
+      "disruption": "Disruption",
+      "vessels": "vessels",
+      "incidents7d": "incidents (7d)",
+      "corridorDisruption": "Corridor Disruption",
+      "corridor": "Corridor",
+      "loadingCorridors": "Loading corridor data...",
       "mineral": "Mineral",
       "topProducers": "En Büyük Üreticiler",
       "risk": "Risk",
@@ -816,7 +824,10 @@
       "yes": "Evet",
       "no": "Hayir",
       "vol": "Hacim",
-      "closes": "Kapanış"
+      "closes": "Kapanış",
+      "leanYes": "Lean Yes",
+      "leanNo": "Lean No",
+      "tossUp": "Toss-up"
     },
     "stablecoins": {
       "pegHealth": "Parite Sagligi",
@@ -1531,7 +1542,9 @@
       "filterAlerts": "Uyarılar",
       "filterOsint": "OSINT",
       "filterPolitics": "Siyaset",
-      "filterMiddleeast": "Orta Doğu"
+      "filterMiddleeast": "Orta Doğu",
+      "live": "CANLI",
+      "viewSource": "Kaynağı görüntüle"
     },
     "investments": {
       "infoTooltip": "Suudi Arabistan ve BAE'nin kuresel kritik altyapilara dogrudan yabanci yatirimlari veritabani. Yatirimi haritada gormek icin bir satira tiklayin.",
@@ -2074,7 +2087,12 @@
       "usniIntel": "USNI Intel",
       "usniSource": "Source: USNI News Fleet Tracker",
       "approximatePosition": "Position approximate — based on USNI weekly report, not real-time AIS.",
-      "darkDescription": "Gemi karanliga gecti - AIS sinyali kayboldu. Hassas operasyonlara isaret edebilir."
+      "darkDescription": "Gemi karanliga gecti - AIS sinyali kayboldu. Hassas operasyonlara isaret edebilir.",
+      "recentTracking": "Recent Tracking",
+      "lastReport": "LATEST",
+      "nearChokepoint": "NEAR CHOKEPOINT",
+      "nearBase": "NEAR BASE",
+      "lastSeen": "LAST SEEN"
     },
     "militaryCluster": {
       "flightActivity": {

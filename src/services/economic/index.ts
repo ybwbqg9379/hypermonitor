@@ -131,10 +131,10 @@ export async function fetchFredData(): Promise<FredSeries[]> {
     if (obs.length >= 2) {
       const latest = obs[obs.length - 1]!;
       const previous = obs[obs.length - 2]!;
-      const change = latest.value - previous.value;
+      let change = latest.value - previous.value;
       const changePercent = (change / previous.value) * 100;
       let displayValue = latest.value;
-      if (config.id === 'WALCL') displayValue = latest.value / 1000;
+      if (config.id === 'WALCL') { displayValue = latest.value / 1000; change = change / 1000; }
 
       out.push({
         id: config.id, name: config.name,

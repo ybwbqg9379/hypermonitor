@@ -111,6 +111,9 @@ import { getCountriesGeoJson, getCountryAtCoordinates, getCountryBbox } from '@/
 import type { FeatureCollection, Geometry } from 'geojson';
 
 import { isAllowedPreviewUrl } from '@/utils/imagery-preview';
+import { pinWebcam, isPinned } from '@/services/webcams/pinned-store';
+import type { WebcamEntry, WebcamCluster } from '@/generated/client/worldmonitor/webcam/v1/service_client';
+import { fetchWebcamImage } from '@/services/webcams';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
 export type DeckMapView = 'global' | 'america' | 'mena' | 'eu' | 'asia' | 'latam' | 'africa' | 'oceania';
@@ -341,6 +344,7 @@ export class DeckGLMap {
   private happinessSource = '';
   private speciesRecoveryZones: Array<SpeciesRecovery & { recoveryZone: { name: string; lat: number; lon: number } }> = [];
   private renewableInstallations: RenewableInstallation[] = [];
+  private webcamData: Array<WebcamEntry | WebcamCluster> = [];
   private countriesGeoJsonData: FeatureCollection<Geometry> | null = null;
   private conflictZoneGeoJson: GeoJSON.FeatureCollection | null = null;
 
@@ -1502,6 +1506,19 @@ export class DeckGLMap {
       layers.push(this.createImageryFootprintLayer());
     }
 
+    // Webcam layer (server-side clustered markers)
+    if (mapLayers.webcams && this.webcamData.length > 0) {
+      layers.push(new ScatterplotLayer<WebcamEntry | WebcamCluster>({
+        id: 'webcam-layer',
+        data: this.webcamData,
+        getPosition: (d) => [d.lng, d.lat],
+        getRadius: (d) => ('count' in d ? Math.min(8 + d.count * 0.5, 24) : 6),
+        getFillColor: (d) => ('count' in d ? [0, 212, 255, 180] : [255, 215, 0, 200]) as [number, number, number, number],
+        radiusUnits: 'pixels',
+        pickable: true,
+      }));
+    }
+
     // News geo-locations (always shown if data exists)
     if (this.newsLocations.length > 0) {
       layers.push(...this.createNewsLocationsLayer());
@@ -1913,7 +1930,7 @@ export class DeckGLMap {
       id: 'earthquakes-layer',
       data: earthquakes,
       getPosition: (d) => [d.location?.longitude ?? 0, d.location?.latitude ?? 0],
-      getRadius: (d) => Math.pow(2, d.magnitude) * 1000,
+      getRadius: (d) => 2 ** d.magnitude * 1000,
       getFillColor: (d) => {
         const mag = d.magnitude;
         if (mag >= 6) return [255, 0, 0, 200] as [number, number, number, number];
@@ -3457,6 +3474,12 @@ export class DeckGLMap {
         imgHtml += '</div>';
         return { html: imgHtml };
       }
+      case 'webcam-layer': {
+        const label = 'count' in obj
+          ? `${obj.count} webcams`
+          : (obj.title || obj.name || 'Webcam');
+        return { html: `<div class="deckgl-tooltip"><strong>${text(label)}</strong></div>` };
+      }
       default:
         return null;
     }
@@ -3636,6 +3659,11 @@ export class DeckGLMap {
       return;
     }
 
+    if (layerId === 'webcam-layer' && !('count' in info.object)) {
+      this.showWebcamClickPopup(info.object as WebcamEntry, info.x, info.y);
+      return;
+    }
+
     // Map layer IDs to popup types
     const layerToPopupType: Record<string, PopupType> = {
       'conflict-zones-layer': 'conflict',
@@ -3720,10 +3748,76 @@ export class DeckGLMap {
     });
   }
 
+  private async showWebcamClickPopup(webcam: WebcamEntry, x: number, y: number): Promise<void> {
+    // Remove any existing popup
+    this.container.querySelector('.deckgl-webcam-popup')?.remove();
+
+    const popup = document.createElement('div');
+    popup.className = 'deckgl-webcam-popup';
+    popup.style.position = 'absolute';
+    popup.style.left = x + 'px';
+    popup.style.top = y + 'px';
+    popup.style.zIndex = '1000';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'deckgl-webcam-popup-title';
+    titleEl.textContent = webcam.title || webcam.webcamId || '';
+    popup.appendChild(titleEl);
+
+    const locationEl = document.createElement('div');
+    locationEl.className = 'deckgl-webcam-popup-location';
+    locationEl.textContent = webcam.country || '';
+    popup.appendChild(locationEl);
+
+    const id = webcam.webcamId;
+
+    // Fetch playerUrl for when user pins
+    const imageData = await fetchWebcamImage(id).catch(() => null);
+
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'webcam-pin-btn';
+    if (isPinned(id)) {
+      pinBtn.classList.add('webcam-pin-btn--pinned');
+      pinBtn.textContent = '\u{1F4CC} Pinned';
+      pinBtn.disabled = true;
+    } else {
+      pinBtn.textContent = '\u{1F4CC} Pin';
+      pinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pinWebcam({
+          webcamId: id,
+          title: webcam.title || imageData?.title || '',
+          lat: webcam.lat,
+          lng: webcam.lng,
+          category: webcam.category || 'other',
+          country: webcam.country || '',
+          playerUrl: imageData?.playerUrl || '',
+        });
+        pinBtn.classList.add('webcam-pin-btn--pinned');
+        pinBtn.textContent = '\u{1F4CC} Pinned';
+        pinBtn.disabled = true;
+      });
+    }
+    popup.appendChild(pinBtn);
+
+    const cleanup = () => {
+      popup.remove();
+      document.removeEventListener('click', closeHandler);
+      clearTimeout(autoDismiss);
+    };
+    const closeHandler = (e: MouseEvent) => {
+      if (!popup.contains(e.target as Node)) cleanup();
+    };
+    const autoDismiss = setTimeout(cleanup, 8000);
+    setTimeout(() => document.addEventListener('click', closeHandler), 0);
+
+    this.container.appendChild(popup);
+  }
+
   // Utility methods
   private hexToRgba(hex: string, alpha: number): [number, number, number, number] {
     const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    if (result && result[1] && result[2] && result[3]) {
+    if (result?.[1] && result[2] && result[3]) {
       return [
         parseInt(result[1], 16),
         parseInt(result[2], 16),
@@ -4613,7 +4707,7 @@ export class DeckGLMap {
     if (Math.abs(zoom - this.lastAircraftFetchZoom) >= 1) return true;
     const [prevLng, prevLat] = this.lastAircraftFetchCenter;
     // Threshold scales with zoom — higher zoom = smaller movement triggers fetch
-    const threshold = Math.max(0.1, 2 / Math.pow(2, Math.max(0, zoom - 3)));
+    const threshold = Math.max(0.1, 2 / 2 ** Math.max(0, zoom - 3));
     return Math.abs(center.lat - prevLat) > threshold || Math.abs(center.lng - prevLng) > threshold;
   }
 
@@ -4679,6 +4773,11 @@ export class DeckGLMap {
 
   public setClimateAnomalies(anomalies: ClimateAnomaly[]): void {
     this.climateAnomalies = anomalies;
+    this.render();
+  }
+
+  public setWebcams(markers: Array<WebcamEntry | WebcamCluster>): void {
+    this.webcamData = markers;
     this.render();
   }
 
@@ -5243,6 +5342,13 @@ export class DeckGLMap {
     });
   }
 
+  private countryPulseRaf: number | null = null;
+
+  private getHighlightRestOpacity(): { fill: number; border: number } {
+    const theme = isLightMapTheme(getMapTheme(getMapProvider())) ? 'light' : 'dark';
+    return { fill: theme === 'light' ? 0.18 : 0.12, border: 0.5 };
+  }
+
   public highlightCountry(code: string): void {
     this.highlightedCountryCode = code;
     if (!this.maplibreMap || !this.countryGeoJsonLoaded) return;
@@ -5251,16 +5357,51 @@ export class DeckGLMap {
       this.maplibreMap.setFilter('country-highlight-fill', filter);
       this.maplibreMap.setFilter('country-highlight-border', filter);
     } catch { /* layer not ready yet */ }
+    this.pulseCountryHighlight();
   }
 
   public clearCountryHighlight(): void {
     this.highlightedCountryCode = null;
+    if (this.countryPulseRaf) { cancelAnimationFrame(this.countryPulseRaf); this.countryPulseRaf = null; }
     if (!this.maplibreMap) return;
+    const rest = this.getHighlightRestOpacity();
     const noMatch = ['==', ['get', 'ISO3166-1-Alpha-2'], ''] as maplibregl.FilterSpecification;
     try {
       this.maplibreMap.setFilter('country-highlight-fill', noMatch);
       this.maplibreMap.setFilter('country-highlight-border', noMatch);
+      this.maplibreMap.setPaintProperty('country-highlight-fill', 'fill-opacity', rest.fill);
+      this.maplibreMap.setPaintProperty('country-highlight-border', 'line-opacity', rest.border);
     } catch { /* layer not ready */ }
+  }
+
+  private pulseCountryHighlight(): void {
+    if (this.countryPulseRaf) { cancelAnimationFrame(this.countryPulseRaf); this.countryPulseRaf = null; }
+    const map = this.maplibreMap;
+    if (!map) return;
+    const rest = this.getHighlightRestOpacity();
+    const start = performance.now();
+    const duration = 3000;
+    const step = (now: number) => {
+      const t = (now - start) / duration;
+      if (t >= 1) {
+        this.countryPulseRaf = null;
+        try {
+          map.setPaintProperty('country-highlight-fill', 'fill-opacity', rest.fill);
+          map.setPaintProperty('country-highlight-border', 'line-opacity', rest.border);
+        } catch { /* ignore */ }
+        return;
+      }
+      const pulse = Math.sin(t * Math.PI * 3) ** 2;
+      const fade = 1 - t * t;
+      const fillOp = rest.fill + 0.25 * pulse * fade;
+      const borderOp = rest.border + 0.5 * pulse * fade;
+      try {
+        map.setPaintProperty('country-highlight-fill', 'fill-opacity', fillOp);
+        map.setPaintProperty('country-highlight-border', 'line-opacity', borderOp);
+      } catch { /* ignore */ }
+      this.countryPulseRaf = requestAnimationFrame(step);
+    };
+    this.countryPulseRaf = requestAnimationFrame(step);
   }
 
   private switchBasemap(): void {
@@ -5373,6 +5514,11 @@ export class DeckGLMap {
     if (this.renderRafId !== null) {
       cancelAnimationFrame(this.renderRafId);
       this.renderRafId = null;
+    }
+
+    if (this.countryPulseRaf !== null) {
+      cancelAnimationFrame(this.countryPulseRaf);
+      this.countryPulseRaf = null;
     }
 
     if (this.moveTimeoutId) {

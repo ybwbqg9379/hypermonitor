@@ -506,7 +506,11 @@ export const STRATEGIC_WATERWAYS: StrategicWaterway[] = [
   { id: 'panama', name: 'PANAMA CANAL', lat: 9.1, lon: -79.7, description: 'Americas shipping route' },
   { id: 'gibraltar', name: 'STRAIT OF GIBRALTAR', lat: 35.9, lon: -5.6, description: 'Mediterranean access, NATO control' },
   { id: 'bab_el_mandeb', name: 'BAB EL-MANDEB', lat: 12.5, lon: 43.3, description: 'Red Sea chokepoint, Houthi attacks' },
-  { id: 'dardanelles', name: 'DARDANELLES', lat: 40.2, lon: 26.4, description: 'Aegean-Marmara link, Turkey control' },
+  { id: 'cape_of_good_hope', name: 'CAPE OF GOOD HOPE', lat: -34.36, lon: 18.49, description: 'Suez bypass route, tanker traffic' },
+  { id: 'dover_strait', name: 'DOVER STRAIT', lat: 51.0, lon: 1.5, description: 'English Channel narrows, busiest shipping lane' },
+  { id: 'korea_strait', name: 'KOREA STRAIT', lat: 34.0, lon: 129.0, description: 'Japan-Korea shipping lane' },
+  { id: 'kerch_strait', name: 'KERCH STRAIT', lat: 45.3, lon: 36.6, description: 'Black Sea-Azov access, Russia-Ukraine flashpoint' },
+  { id: 'lombok_strait', name: 'LOMBOK STRAIT', lat: -8.5, lon: 115.7, description: 'Malacca bypass for deep-draft vessels' },
 ];
 
 export const APT_GROUPS: APTGroup[] = [

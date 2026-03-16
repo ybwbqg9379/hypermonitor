@@ -42,6 +42,7 @@ import type { GpsJamHex } from '@/services/gps-interference';
 import type { SatellitePosition } from '@/services/satellites';
 import type { IranEvent } from '@/services/conflict';
 import type { ImageryScene } from '@/generated/server/worldmonitor/imagery/v1/service_server';
+import type { WebcamEntry, WebcamCluster } from '@/generated/client/worldmonitor/webcam/v1/service_client';
 
 export type TimeRange = '1h' | '6h' | '24h' | '48h' | '7d' | 'all';
 export type MapView = 'global' | 'america' | 'mena' | 'eu' | 'asia' | 'latam' | 'africa' | 'oceania';
@@ -133,6 +134,7 @@ export class MapContainer {
   private cachedEscalationFlights: MilitaryFlight[] | null = null;
   private cachedEscalationVessels: MilitaryVessel[] | null = null;
   private cachedImageryScenes: ImageryScene[] | null = null;
+  private cachedWebcams: Array<WebcamEntry | WebcamCluster> | null = null;
 
   constructor(container: HTMLElement, initialState: MapContainerState, preferGlobe = false) {
     this.container = container;
@@ -295,6 +297,11 @@ export class MapContainer {
     if (this.cachedHotspotActivity) this.updateHotspotActivity(this.cachedHotspotActivity);
     if (this.cachedEscalationFlights && this.cachedEscalationVessels) this.updateMilitaryForEscalation(this.cachedEscalationFlights, this.cachedEscalationVessels);
     if (this.cachedImageryScenes) this.setImageryScenes(this.cachedImageryScenes);
+    if (this.cachedWebcams) {
+      if (this.useGlobe) this.globeMap?.setWebcams(this.cachedWebcams);
+      else if (this.useDeckGL) this.deckGLMap?.setWebcams(this.cachedWebcams);
+      else this.svgMap?.setWebcams(this.cachedWebcams);
+    }
   }
 
   public isGlobeMode(): boolean {
@@ -400,6 +407,13 @@ export class MapContainer {
     if (this.useDeckGL) { this.deckGLMap?.setImageryScenes(scenes); }
   }
 
+  public setWebcams(markers: Array<WebcamEntry | WebcamCluster>): void {
+    this.cachedWebcams = markers;
+    if (this.useGlobe) { this.globeMap?.setWebcams(markers); return; }
+    if (this.useDeckGL) { this.deckGLMap?.setWebcams(markers); }
+    else { this.svgMap?.setWebcams(markers); }
+  }
+
   public setWeatherAlerts(alerts: WeatherAlert[]): void {
     this.cachedWeatherAlerts = alerts;
     if (this.useGlobe) { this.globeMap?.setWeatherAlerts(alerts); return; }
@@ -483,7 +497,7 @@ export class MapContainer {
   public setMilitaryVessels(vessels: MilitaryVessel[], clusters: MilitaryVesselCluster[] = []): void {
     this.cachedMilitaryVessels = vessels;
     this.cachedMilitaryVesselClusters = clusters;
-    if (this.useGlobe) { this.globeMap?.setMilitaryVessels(vessels); return; }
+    if (this.useGlobe) { this.globeMap?.setMilitaryVessels(vessels, clusters); return; }
     if (this.useDeckGL) { this.deckGLMap?.setMilitaryVessels(vessels, clusters); } else { this.svgMap?.setMilitaryVessels(vessels, clusters); }
   }
 
@@ -694,16 +708,7 @@ export class MapContainer {
 
   public getBbox(): string | null {
     if (this.useDeckGL) return this.deckGLMap?.getBbox() ?? null;
-    if (this.useGlobe) {
-      const center = this.globeMap?.getCenter();
-      if (!center) return null;
-      const R = 5;
-      const south = Math.max(-90, center.lat - R);
-      const north = Math.min(90, center.lat + R);
-      const west = Math.max(-180, center.lon - R);
-      const east = Math.min(180, center.lon + R);
-      return `${west.toFixed(4)},${south.toFixed(4)},${east.toFixed(4)},${north.toFixed(4)}`;
-    }
+    if (this.useGlobe) return this.globeMap?.getBbox() ?? null;
     return null;
   }
 

@@ -214,9 +214,9 @@ export async function fetchFeed(feed: Feed): Promise<NewsItem[]> {
   }
 
   try {
-    let url = typeof feed.url === 'string' ? feed.url : feed.url['en'];
+    let url = typeof feed.url === 'string' ? feed.url : feed.url.en;
     if (typeof feed.url !== 'string') {
-      url = feed.url[currentLang] || feed.url['en'] || Object.values(feed.url)[0] || '';
+      url = feed.url[currentLang] || feed.url.en || Object.values(feed.url)[0] || '';
     }
 
     if (!url) throw new Error(`No URL found for feed ${feed.name}`);
