@@ -76,7 +76,7 @@ describe('country geometry overrides', () => {
       if (url === '/data/countries.geojson') {
         return Promise.resolve(jsonResponse(makeFeatureCollection(1)));
       }
-      if (url === 'https://maps.worldmonitor.app/country-boundary-overrides.geojson') {
+      if (url === '/data/country-boundary-overrides.geojson') {
         return new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
             overrideAborted = true;
@@ -103,7 +103,7 @@ describe('country geometry overrides', () => {
       if (url === '/data/countries.geojson') {
         return Promise.resolve(jsonResponse(makeFeatureCollection(1)));
       }
-      if (url === 'https://maps.worldmonitor.app/country-boundary-overrides.geojson') {
+      if (url === '/data/country-boundary-overrides.geojson') {
         return Promise.resolve(jsonResponse(makeFeatureCollection(2)));
       }
       return Promise.reject(new Error(`Unexpected URL: ${url}`));
