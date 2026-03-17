@@ -854,6 +854,11 @@ export default defineConfig({
       ],
     },
     proxy: {
+      // Widget agent — forward to Railway relay for SSE streaming
+      '/widget-agent': {
+        target: 'https://proxy.worldmonitor.app',
+        changeOrigin: true,
+      },
       // Yahoo Finance API
       '/api/yahoo': {
         target: 'https://query1.finance.yahoo.com',

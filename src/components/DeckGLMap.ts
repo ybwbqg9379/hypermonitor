@@ -46,6 +46,7 @@ import type { ImageryScene } from '@/generated/server/worldmonitor/imagery/v1/se
 import type { DisplacementFlow } from '@/services/displacement';
 import type { Earthquake } from '@/services/earthquakes';
 import type { ClimateAnomaly } from '@/services/climate';
+import type { RadiationObservation } from '@/services/radiation';
 import { ArcLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import { H3HexagonLayer } from '@deck.gl/geo-layers';
@@ -331,6 +332,7 @@ export class DeckGLMap {
   private displacementFlows: DisplacementFlow[] = [];
   private gpsJammingHexes: GpsJamHex[] = [];
   private climateAnomalies: ClimateAnomaly[] = [];
+  private radiationObservations: RadiationObservation[] = [];
   private tradeRouteSegments: TradeRouteSegment[] = resolveTradeRouteSegments();
   private positiveEvents: PositiveGeoEvent[] = [];
   private kindnessPoints: KindnessPoint[] = [];
@@ -1283,6 +1285,11 @@ export class DeckGLMap {
       layers.push(...this.createNaturalEventsLayers(filteredNaturalEvents));
     }
 
+    if (mapLayers.radiationWatch && this.radiationObservations.length > 0) {
+      layers.push(this.createRadiationLayer());
+    }
+    layers.push(this.createEmptyGhost('radiation-watch-layer'));
+
     // Satellite fires layer (NASA FIRMS)
     if (mapLayers.fires && this.firmsFireData.length > 0) {
       layers.push(this.createFiresLayer());
@@ -2165,6 +2172,33 @@ export class DeckGLMap {
       stroked: true,
       getLineColor: [255, 255, 255, 160] as [number, number, number, number],
       lineWidthMinPixels: 1,
+    });
+  }
+
+  private createRadiationLayer(): ScatterplotLayer<RadiationObservation> {
+    return new ScatterplotLayer<RadiationObservation>({
+      id: 'radiation-watch-layer',
+      data: this.radiationObservations,
+      getPosition: (d) => [d.lon, d.lat],
+      getRadius: (d) => {
+        const base = d.severity === 'spike' ? 26000 : 18000;
+        if (d.corroborated) return base * 1.15;
+        if (d.confidence === 'low') return base * 0.85;
+        return base;
+      },
+      getFillColor: (d) => (
+        d.severity === 'spike'
+          ? [255, 48, 48, 220]
+          : d.confidence === 'low'
+            ? [255, 174, 0, 150]
+            : [255, 174, 0, 200]
+      ) as [number, number, number, number],
+      getLineColor: [255, 255, 255, 200],
+      stroked: true,
+      lineWidthMinPixels: 2,
+      radiusMinPixels: 6,
+      radiusMaxPixels: 20,
+      pickable: true,
     });
   }
 
@@ -3364,6 +3398,13 @@ export class DeckGLMap {
         return { html: `<div class="deckgl-tooltip"><strong>${text(obj.title)}</strong><br/>${text(obj.location)}</div>` };
       case 'irradiators-layer':
         return { html: `<div class="deckgl-tooltip"><strong>${text(obj.name)}</strong><br/>${text(obj.type || t('components.deckgl.layers.gammaIrradiators'))}</div>` };
+      case 'radiation-watch-layer': {
+        const severityLabel = obj.severity === 'spike' ? t('components.deckgl.layers.radiationSpike') : t('components.deckgl.layers.radiationElevated');
+        const delta = Number(obj.delta || 0);
+        const confidence = String(obj.confidence || 'low').toUpperCase();
+        const corroboration = obj.corroborated ? 'CONFIRMED' : obj.conflictingSources ? 'CONFLICTING' : confidence;
+        return { html: `<div class="deckgl-tooltip"><strong>${severityLabel}</strong><br/>${text(obj.location)}<br/>${Number(obj.value).toFixed(1)} ${text(obj.unit)} · ${delta >= 0 ? '+' : ''}${delta.toFixed(1)} vs baseline<br/>${text(corroboration)}</div>` };
+      }
       case 'spaceports-layer':
         return { html: `<div class="deckgl-tooltip"><strong>${text(obj.name)}</strong><br/>${text(obj.country || t('components.deckgl.layers.spaceports'))}</div>` };
       case 'ports-layer': {
@@ -3671,6 +3712,7 @@ export class DeckGLMap {
       'bases-layer': 'base',
       'nuclear-layer': 'nuclear',
       'irradiators-layer': 'irradiator',
+      'radiation-watch-layer': 'radiation',
       'datacenters-layer': 'datacenter',
       'cables-layer': 'cable',
       'pipelines-layer': 'pipeline',
@@ -4773,6 +4815,11 @@ export class DeckGLMap {
 
   public setClimateAnomalies(anomalies: ClimateAnomaly[]): void {
     this.climateAnomalies = anomalies;
+    this.render();
+  }
+
+  public setRadiationObservations(observations: RadiationObservation[]): void {
+    this.radiationObservations = observations;
     this.render();
   }
 

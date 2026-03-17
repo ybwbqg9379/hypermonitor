@@ -7,7 +7,7 @@ import type {
   CableHealthStatus,
 } from '../../../../src/generated/server/worldmonitor/infrastructure/v1/service_server';
 
-import { cachedFetchJson } from '../../../_shared/redis';
+import { cachedFetchJsonWithMeta, setCachedJson } from '../../../_shared/redis';
 import { UPSTREAM_TIMEOUT_MS } from './_shared';
 import { CHROME_UA } from '../../../_shared/constants';
 
@@ -425,7 +425,7 @@ export async function getCableHealth(
   _req: GetCableHealthRequest,
 ): Promise<GetCableHealthResponse> {
   try {
-    const result = await cachedFetchJson<GetCableHealthResponse>(CACHE_KEY, CACHE_TTL, async () => {
+    const { data: result, source } = await cachedFetchJsonWithMeta<GetCableHealthResponse>(CACHE_KEY, CACHE_TTL, async () => {
       const ngaData = await fetchNgaWarnings();
       const signals = processNgaSignals(ngaData);
       const cables = computeHealthMap(signals);
@@ -439,6 +439,10 @@ export async function getCableHealth(
     });
 
     if (result) {
+      if (source === 'fresh') {
+        const count = result.cables ? Object.keys(result.cables).length : 0;
+        setCachedJson('seed-meta:cable-health', { fetchedAt: Date.now(), recordCount: count }, 604800).catch(() => {});
+      }
       fallbackCache = result;
       return result;
     }

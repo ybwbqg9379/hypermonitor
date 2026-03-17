@@ -176,7 +176,7 @@ async function fetchTechEvents() {
         if (!title) continue;
         const dateMatch = desc.match(/on\s+(\w+\s+\d{1,2},?\s+\d{4})/i);
         let startDate = null;
-        if (dateMatch) { const p = new Date(dateMatch[1]); if (!isNaN(p.getTime())) startDate = p.toISOString().split('T')[0]; }
+        if (dateMatch) { const p = new Date(dateMatch[1]); if (!Number.isNaN(p.getTime())) startDate = p.toISOString().split('T')[0]; }
         if (!startDate || startDate < today) continue;
         events.push({
           id: guid || `dev-${title.slice(0, 20)}`, title, type: 'conference',

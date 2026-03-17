@@ -60,7 +60,7 @@ async function fetchShippingRates() {
       if (!resp.ok) { console.warn(`  FRED ${cfg.seriesId}: HTTP ${resp.status}`); continue; }
       const data = await resp.json();
       const observations = (data.observations || [])
-        .map(o => { const v = parseFloat(o.value); return isNaN(v) || o.value === '.' ? null : { date: o.date, value: v }; })
+        .map(o => { const v = parseFloat(o.value); return Number.isNaN(v) || o.value === '.' ? null : { date: o.date, value: v }; })
         .filter(Boolean).reverse();
       if (observations.length === 0) continue;
       const current = observations[observations.length - 1].value;
@@ -148,7 +148,7 @@ async function fetchBDI() {
     let articleDate = new Date().toISOString().slice(0, 10);
     if (dateMatch) {
       const parsed = new Date(`${dateMatch[2]} ${dateMatch[1]}, ${dateMatch[3]}`);
-      if (!isNaN(parsed.getTime())) articleDate = parsed.toISOString().slice(0, 10);
+      if (!Number.isNaN(parsed.getTime())) articleDate = parsed.toISOString().slice(0, 10);
     }
 
     const indices = [];
@@ -254,7 +254,7 @@ function parseFlowRows(data, indicator) {
   return dataset.map(row => {
     const year = parseInt(row.Year ?? row.year ?? '', 10);
     const value = parseFloat(row.Value ?? row.value ?? '');
-    return !isNaN(year) && !isNaN(value) ? { year, indicator, value } : null;
+    return !Number.isNaN(year) && !Number.isNaN(value) ? { year, indicator, value } : null;
   }).filter(Boolean);
 }
 
@@ -336,7 +336,7 @@ async function fetchTradeBarriers() {
       const year = parseInt(row.Year ?? row.year ?? '0', 10);
       const value = parseFloat(row.Value ?? row.value ?? '');
       const cc = String(row.ReportingEconomyCode ?? '');
-      return !isNaN(year) && !isNaN(value) && cc ? { country: WTO_MEMBER_CODES[cc] ?? '', countryCode: cc, year, value } : null;
+      return !Number.isNaN(year) && !Number.isNaN(value) && cc ? { country: WTO_MEMBER_CODES[cc] ?? '', countryCode: cc, year, value } : null;
     }).filter(Boolean);
   };
 
@@ -400,7 +400,7 @@ async function fetchTradeRestrictions() {
 
   const restrictions = [...latestByCountry.values()].map(row => {
     const value = parseFloat(row.Value ?? row.value ?? '');
-    if (isNaN(value)) return null;
+    if (Number.isNaN(value)) return null;
     const cc = String(row.ReportingEconomyCode ?? '');
     const year = String(row.Year ?? row.year ?? '');
     return {
@@ -438,7 +438,7 @@ async function fetchTariffTrends() {
     const datapoints = dataset.map(row => {
       const year = parseInt(row.Year ?? row.year ?? '', 10);
       const tariffRate = parseFloat(row.Value ?? row.value ?? '');
-      if (isNaN(year) || isNaN(tariffRate)) return null;
+      if (Number.isNaN(year) || Number.isNaN(tariffRate)) return null;
       return {
         reportingCountry: WTO_MEMBER_CODES[reporter] ?? reporter,
         partnerCountry: 'World', productSector: 'All products',

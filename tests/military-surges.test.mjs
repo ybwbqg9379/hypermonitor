@@ -33,15 +33,79 @@ describe('military surge signals', () => {
   it('detects fighter surges against prior baseline history', () => {
     const history = appendMilitaryHistory([], {
       assessedAt: 1,
-      theaters: [{ theaterId: 'taiwan-theater', fighters: 2, transport: 1, totalFlights: 4 }],
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
     });
     const history2 = appendMilitaryHistory(history, {
       assessedAt: 2,
-      theaters: [{ theaterId: 'taiwan-theater', fighters: 2, transport: 1, totalFlights: 5 }],
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
     });
     const history3 = appendMilitaryHistory(history2, {
       assessedAt: 3,
-      theaters: [{ theaterId: 'taiwan-theater', fighters: 2, transport: 1, totalFlights: 4 }],
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
+    });
+    const history4 = appendMilitaryHistory(history3, {
+      assessedAt: 4,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
+    });
+    const history5 = appendMilitaryHistory(history4, {
+      assessedAt: 5,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
+    });
+    const history6 = appendMilitaryHistory(history5, {
+      assessedAt: 6,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 1, transport: 1, totalFlights: 3 }],
+    });
+    const history7 = appendMilitaryHistory(history6, {
+      assessedAt: 7,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 6, transport: 1, totalFlights: 8 }],
+    });
+    const history8 = appendMilitaryHistory(history7, {
+      assessedAt: 8,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 6, transport: 1, totalFlights: 8 }],
+    });
+    const history9 = appendMilitaryHistory(history8, {
+      assessedAt: 9,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 6, transport: 1, totalFlights: 8 }],
+    });
+
+    const surges = buildMilitarySurges([{
+      theaterId: 'taiwan-theater',
+      assessedAt: 10,
+      totalFlights: 10,
+      postureLevel: 'elevated',
+      strikeCapable: true,
+      fighters: 8,
+      tankers: 1,
+      awacs: 1,
+      transport: 1,
+      reconnaissance: 0,
+      bombers: 0,
+      drones: 0,
+      byOperator: { plaaf: 8 },
+      byCountry: { China: 8 },
+    }], history9);
+
+    assert.ok(surges.some((surge) => surge.surgeType === 'fighter'));
+    const fighter = surges.find((surge) => surge.surgeType === 'fighter');
+    assert.equal(fighter.theaterId, 'taiwan-theater');
+    assert.equal(fighter.dominantCountry, 'China');
+    assert.ok(fighter.surgeMultiple >= 2);
+    assert.ok(fighter.persistent);
+    assert.ok(fighter.persistenceCount >= 1);
+  });
+
+  it('requires recent snapshots to clear the same surge thresholds before marking persistence', () => {
+    const history = appendMilitaryHistory([], {
+      assessedAt: 1,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 3, transport: 1, totalFlights: 5 }],
+    });
+    const history2 = appendMilitaryHistory(history, {
+      assessedAt: 2,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 3, transport: 1, totalFlights: 5 }],
+    });
+    const history3 = appendMilitaryHistory(history2, {
+      assessedAt: 3,
+      theaters: [{ theaterId: 'taiwan-theater', fighters: 3, transport: 1, totalFlights: 5 }],
     });
 
     const surges = buildMilitarySurges([{
@@ -61,11 +125,10 @@ describe('military surge signals', () => {
       byCountry: { China: 8 },
     }], history3);
 
-    assert.ok(surges.some((surge) => surge.surgeType === 'fighter'));
     const fighter = surges.find((surge) => surge.surgeType === 'fighter');
-    assert.equal(fighter.theaterId, 'taiwan-theater');
-    assert.equal(fighter.dominantCountry, 'China');
-    assert.ok(fighter.surgeMultiple >= 3.5);
+    assert.ok(fighter);
+    assert.equal(fighter.persistent, false);
+    assert.equal(fighter.persistenceCount, 0);
   });
 
   it('does not build a baseline from a different source family', () => {

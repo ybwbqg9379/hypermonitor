@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
-let _S3Client, _PutObjectCommand;
+let _S3Client, _PutObjectCommand, _GetObjectCommand;
 async function loadS3SDK() {
   if (!_S3Client) {
     const sdk = await import('@aws-sdk/client-s3');
     _S3Client = sdk.S3Client;
     _PutObjectCommand = sdk.PutObjectCommand;
+    _GetObjectCommand = sdk.GetObjectCommand;
   }
-  return { S3Client: _S3Client, PutObjectCommand: _PutObjectCommand };
+  return { S3Client: _S3Client, PutObjectCommand: _PutObjectCommand, GetObjectCommand: _GetObjectCommand };
 }
 
 function getEnvValue(env, keys) {
@@ -128,8 +129,43 @@ async function putR2JsonObject(config, key, payload, metadata = {}) {
   return { bucket: config.bucket, key, bytes: Buffer.byteLength(body, 'utf8') };
 }
 
+async function getR2JsonObject(config, key) {
+  if (config.mode === 'api') {
+    const encodedKey = key.split('/').map(part => encodeURIComponent(part)).join('/');
+    const resp = await fetch(`${config.apiBaseUrl}/accounts/${config.accountId}/r2/buckets/${config.bucket}/objects/${encodedKey}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${config.apiToken}`,
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (resp.status === 404) return null;
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`Cloudflare R2 API download failed: HTTP ${resp.status} — ${text.slice(0, 200)}`);
+    }
+    return resp.json();
+  }
+
+  const { GetObjectCommand } = await loadS3SDK();
+  const client = await getR2StorageClient(config);
+  try {
+    const response = await client.send(new GetObjectCommand({
+      Bucket: config.bucket,
+      Key: key,
+    }));
+    const body = await response.Body?.transformToString?.();
+    if (!body) return null;
+    return JSON.parse(body);
+  } catch (err) {
+    if (err?.$metadata?.httpStatusCode === 404 || err?.name === 'NoSuchKey') return null;
+    throw err;
+  }
+}
+
 export {
   resolveR2StorageConfig,
   getR2StorageClient,
+  getR2JsonObject,
   putR2JsonObject,
 };

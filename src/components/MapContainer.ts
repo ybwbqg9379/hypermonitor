@@ -38,6 +38,7 @@ import type { KindnessPoint } from '@/services/kindness-data';
 import type { HappinessData } from '@/services/happiness-data';
 import type { SpeciesRecovery } from '@/services/conservation-data';
 import type { RenewableInstallation } from '@/services/renewable-installations';
+import type { RadiationObservation } from '@/services/radiation';
 import type { GpsJamHex } from '@/services/gps-interference';
 import type { SatellitePosition } from '@/services/satellites';
 import type { IranEvent } from '@/services/conflict';
@@ -119,6 +120,7 @@ export class MapContainer {
   private cachedUcdpEvents: UcdpGeoEvent[] | null = null;
   private cachedDisplacementFlows: DisplacementFlow[] | null = null;
   private cachedClimateAnomalies: ClimateAnomaly[] | null = null;
+  private cachedRadiationObservations: RadiationObservation[] | null = null;
   private cachedGpsJamming: GpsJamHex[] | null = null;
   private cachedSatellites: SatellitePosition[] | null = null;
   private cachedCyberThreats: CyberThreat[] | null = null;
@@ -283,6 +285,7 @@ export class MapContainer {
     if (this.cachedUcdpEvents) this.setUcdpEvents(this.cachedUcdpEvents);
     if (this.cachedDisplacementFlows) this.setDisplacementFlows(this.cachedDisplacementFlows);
     if (this.cachedClimateAnomalies) this.setClimateAnomalies(this.cachedClimateAnomalies);
+    if (this.cachedRadiationObservations) this.setRadiationObservations(this.cachedRadiationObservations);
     if (this.cachedGpsJamming) this.setGpsJamming(this.cachedGpsJamming);
     if (this.cachedSatellites) this.setSatellites(this.cachedSatellites);
     if (this.cachedCyberThreats) this.setCyberThreats(this.cachedCyberThreats);
@@ -548,6 +551,16 @@ export class MapContainer {
     if (this.useGlobe) { this.globeMap?.setClimateAnomalies(anomalies); return; }
     if (this.useDeckGL) {
       this.deckGLMap?.setClimateAnomalies(anomalies);
+    }
+  }
+
+  public setRadiationObservations(observations: RadiationObservation[]): void {
+    this.cachedRadiationObservations = observations;
+    if (this.useGlobe) { this.globeMap?.setRadiationObservations(observations); return; }
+    if (this.useDeckGL) {
+      this.deckGLMap?.setRadiationObservations(observations);
+    } else {
+      this.svgMap?.setRadiationObservations(observations);
     }
   }
 
@@ -950,6 +963,7 @@ export class MapContainer {
     this.cachedUcdpEvents = null;
     this.cachedDisplacementFlows = null;
     this.cachedClimateAnomalies = null;
+    this.cachedRadiationObservations = null;
     this.cachedGpsJamming = null;
     this.cachedSatellites = null;
     this.cachedCyberThreats = null;

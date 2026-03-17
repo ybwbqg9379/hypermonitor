@@ -36,6 +36,12 @@ function getComparableTheaterSnapshots(history, theaterId, sourceVersion = '') {
     .slice(-BASELINE_WINDOW);
 }
 
+function countPersistentSnapshots(snapshots, field, baseline, minCount, thresholdFactor = 1) {
+  const recent = snapshots.slice(-3);
+  const threshold = Math.max(minCount, baseline * thresholdFactor);
+  return recent.filter((snapshot) => (snapshot?.[field] || 0) >= threshold).length;
+}
+
 export function summarizeMilitaryTheaters(flights, theaters, assessedAt = Date.now()) {
   return theaters.map((theater) => {
     const theaterFlights = flights.filter(
@@ -112,6 +118,8 @@ export function buildMilitarySurges(theaterSummaries, history, opts = {}) {
       const effectiveBaseline = Math.max(1, baselineCount);
       if (currentCount < minCount) return;
       if (currentCount < effectiveBaseline * surgeThreshold) return;
+      const field = surgeType === 'fighter' ? 'fighters' : 'transport';
+      const persistenceCount = countPersistentSnapshots(priorSnapshots, field, effectiveBaseline, minCount, surgeThreshold);
 
       surges.push({
         id: `${surgeType}-${summary.theaterId}`,
@@ -132,6 +140,8 @@ export function buildMilitarySurges(theaterSummaries, history, opts = {}) {
         dominantOperator: dominantOperator?.[0] || '',
         dominantOperatorCount: dominantOperator?.[1] || 0,
         historyPoints: priorSnapshots.length,
+        persistenceCount,
+        persistent: persistenceCount >= 1,
         assessedAt: summary.assessedAt,
       });
     };
@@ -145,6 +155,7 @@ export function buildMilitarySurges(theaterSummaries, history, opts = {}) {
       summary.totalFlights >= Math.max(6, Math.ceil(effectiveTotalBaseline * totalSurgeThreshold)) &&
       totalChangePct >= 40
     ) {
+      const persistenceCount = countPersistentSnapshots(priorSnapshots, 'totalFlights', effectiveTotalBaseline, 6, totalSurgeThreshold);
       surges.push({
         id: `air-activity-${summary.theaterId}`,
         theaterId: summary.theaterId,
@@ -164,6 +175,8 @@ export function buildMilitarySurges(theaterSummaries, history, opts = {}) {
         dominantOperator: dominantOperator?.[0] || '',
         dominantOperatorCount: dominantOperator?.[1] || 0,
         historyPoints: priorSnapshots.length,
+        persistenceCount,
+        persistent: persistenceCount >= 1,
         assessedAt: summary.assessedAt,
       });
     }
