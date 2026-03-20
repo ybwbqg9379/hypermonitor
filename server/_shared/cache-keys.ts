@@ -50,6 +50,10 @@ export const BOOTSTRAP_CACHE_KEYS: Record<string, string> = {
   forecasts:          'forecast:predictions:v2',
   customsRevenue:     'trade:customs-revenue:v1',
   sanctionsPressure: 'sanctions:pressure:v1',
+  cryptoSectors:    'market:crypto-sectors:v1',
+  defiTokens:       'market:defi-tokens:v1',
+  aiTokens:         'market:ai-tokens:v1',
+  otherTokens:      'market:other-tokens:v1',
 };
 
 export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
@@ -70,4 +74,8 @@ export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
   securityAdvisories: 'slow',
   forecasts: 'fast',
   customsRevenue: 'slow',
+  cryptoSectors: 'slow',
+  defiTokens: 'slow',
+  aiTokens: 'slow',
+  otherTokens: 'slow',
 };

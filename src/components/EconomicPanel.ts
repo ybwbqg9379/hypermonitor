@@ -7,6 +7,7 @@ import { isFeatureAvailable } from '@/services/runtime-config';
 import type { SpendingSummary } from '@/services/usa-spending';
 import { formatAwardAmount, getAwardTypeIcon } from '@/services/usa-spending';
 import { getCSSColor } from '@/utils';
+import { sparkline } from '@/utils/sparkline';
 
 type TabId = 'indicators' | 'spending' | 'centralBanks';
 
@@ -215,6 +216,7 @@ export class EconomicPanel extends Panel {
                 <span class="change ${getSeriesChangeClass(series.change)}">${escapeHtml(formatSeriesChange(series))}</span>
               </div>
               <div class="indicator-date">${escapeHtml(series.date)}</div>
+              ${sparkline(series.observations?.map(o => o.value) ?? [], series.change !== null && series.change >= 0 ? '#4caf50' : '#f44336', 120, 28, 'display:block;margin:2px 0')}
             </div>
           `).join('')}
         </div>

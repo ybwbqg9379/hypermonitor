@@ -35,10 +35,14 @@ import { toApiUrl } from '@/services/runtime';
 // ---- Client + Circuit Breakers ----
 
 const client = new EconomicServiceClient(getRpcBaseUrl(), { fetch: (...args) => globalThis.fetch(...args) });
+const WB_BREAKERS_WARN_THRESHOLD = 50;
 const wbBreakers = new Map<string, ReturnType<typeof createCircuitBreaker<ListWorldBankIndicatorsResponse>>>();
 
 function getWbBreaker(indicatorCode: string) {
   if (!wbBreakers.has(indicatorCode)) {
+    if (wbBreakers.size >= WB_BREAKERS_WARN_THRESHOLD) {
+      console.warn(`[wb] breaker pool at ${wbBreakers.size} — unexpected growth, investigate getWbBreaker callers`);
+    }
     wbBreakers.set(indicatorCode, createCircuitBreaker<ListWorldBankIndicatorsResponse>({
       name: `WB:${indicatorCode}`,
       cacheTtlMs: 30 * 60 * 1000,
@@ -76,6 +80,7 @@ export interface FredSeries {
   changePercent: number | null;
   date: string;
   unit: string;
+  observations: Array<{ date: string; value: number }>;
 }
 
 interface FredConfig {
@@ -159,6 +164,7 @@ export async function fetchFredData(): Promise<FredSeries[]> {
         change: roundValue(change, config.precision),
         changePercent: changePercent !== null ? Number(changePercent.toFixed(2)) : null,
         date: latest.date, unit: config.unit,
+        observations: obs.slice(-30).map(o => ({ date: o.date, value: toDisplayValue(o.value, config) })),
       });
     } else {
       const latest = obs[0]!;
@@ -168,6 +174,7 @@ export async function fetchFredData(): Promise<FredSeries[]> {
         value: roundValue(displayValue, config.precision),
         previousValue: null, change: null, changePercent: null,
         date: latest.date, unit: config.unit,
+        observations: obs.map(o => ({ date: o.date, value: toDisplayValue(o.value, config) })),
       });
     }
   }

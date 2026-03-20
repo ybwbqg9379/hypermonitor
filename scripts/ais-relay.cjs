@@ -1264,11 +1264,19 @@ const MARKET_SYMBOLS = [
   '^DJI', '^GSPC', '^IXIC',
 ];
 
-const COMMODITY_SYMBOLS = ['^VIX', 'GC=F', 'CL=F', 'NG=F', 'SI=F', 'HG=F'];
+const _commodityCfg = requireShared('commodities.json');
+const COMMODITY_SYMBOLS = _commodityCfg.commodities.map(c => c.symbol);
 
 const SECTOR_SYMBOLS = ['XLK', 'XLF', 'XLE', 'XLV', 'XLY', 'XLI', 'XLP', 'XLU', 'XLB', 'XLRE', 'XLC', 'SMH'];
 
-const YAHOO_ONLY = new Set(['^GSPC', '^DJI', '^IXIC', '^VIX', 'GC=F', 'CL=F', 'NG=F', 'SI=F', 'HG=F']);
+// Symbols that must come from Yahoo — Finnhub doesn't carry futures (=F) or major indices.
+// ^GSPC/^DJI/^IXIC live in MARKET_SYMBOLS (not COMMODITY_SYMBOLS) so they must be listed
+// explicitly; commodity ETFs (URA, LIT) also go through Yahoo since they have no Finnhub feed.
+const YAHOO_ONLY = new Set([
+  '^GSPC', '^DJI', '^IXIC',
+  ...COMMODITY_SYMBOLS.filter(s => s.endsWith('=F') || s.startsWith('^')),
+  'URA', 'LIT',
+]);
 
 function fetchYahooChartDirect(symbol) {
   return new Promise((resolve) => {
@@ -1376,10 +1384,21 @@ async function seedMarketQuotes() {
 
 async function seedCommodityQuotes() {
   const quotes = [];
+  const missing = [];
   for (const s of COMMODITY_SYMBOLS) {
     const yahoo = await fetchYahooChartDirect(s);
     if (yahoo) quotes.push({ symbol: s, name: s, display: s, price: yahoo.price, change: yahoo.change, sparkline: yahoo.sparkline });
+    else missing.push(s);
     await sleep(150);
+  }
+  // Retry symbols that failed (Yahoo 429 recovery)
+  if (missing.length > 0) {
+    await sleep(3000);
+    for (const s of missing) {
+      const yahoo = await fetchYahooChartDirect(s);
+      if (yahoo) quotes.push({ symbol: s, name: s, display: s, price: yahoo.price, change: yahoo.change, sparkline: yahoo.sparkline });
+      await sleep(200);
+    }
   }
 
   if (quotes.length === 0) {
@@ -1640,6 +1659,94 @@ async function seedStablecoinMarkets() {
   return stablecoins.length;
 }
 
+// Crypto Sectors Heatmap — CoinGecko sector averages
+const _sectorsCfg = requireShared('crypto-sectors.json');
+const SECTORS_LIST = _sectorsCfg.sectors;
+const SECTORS_SEED_TTL = 3600; // 1h
+
+async function seedCryptoSectors() {
+  const allIds = [...new Set(SECTORS_LIST.flatMap((s) => s.tokens))];
+  let data;
+  try {
+    const apiKey = process.env.COINGECKO_API_KEY;
+    const base = apiKey ? 'https://pro-api.coingecko.com/api/v3' : 'https://api.coingecko.com/api/v3';
+    const headers = { Accept: 'application/json' };
+    if (apiKey) headers['x-cg-pro-api-key'] = apiKey;
+    const url = `${base}/coins/markets?vs_currency=usd&ids=${allIds.join(',')}&order=market_cap_desc&sparkline=false&price_change_percentage=24h`;
+    data = await cyberHttpGetJson(url, headers, 15000);
+    if (!Array.isArray(data) || data.length === 0) throw new Error('CoinGecko returned no data');
+  } catch (err) {
+    console.warn(`[CryptoSectors] CoinGecko failed: ${err.message} — skipping`);
+    return 0;
+  }
+  const byId = new Map(data.map((c) => [c.id, c.price_change_percentage_24h]));
+  const sectors = SECTORS_LIST.map((sector) => {
+    const changes = sector.tokens.map((id) => byId.get(id)).filter((v) => typeof v === 'number' && isFinite(v));
+    const change = changes.length > 0 ? changes.reduce((a, b) => a + b, 0) / changes.length : 0;
+    return { id: sector.id, name: sector.name, change };
+  });
+  const ok1 = await upstashSet('market:crypto-sectors:v1', { sectors }, SECTORS_SEED_TTL);
+  const ok2 = await upstashSet('seed-meta:market:crypto-sectors', { fetchedAt: Date.now(), recordCount: sectors.length }, 604800);
+  console.log(`[CryptoSectors] Seeded ${sectors.length} sectors (redis: ${ok1 && ok2 ? 'OK' : 'PARTIAL'})`);
+  return sectors.length;
+}
+
+// Token Panels — DeFi, AI, Other — single CoinGecko call writing 3 Redis keys
+const _defiCfg = requireShared('defi-tokens.json');
+const _aiCfg = requireShared('ai-tokens.json');
+const _otherCfg = requireShared('other-tokens.json');
+const TOKEN_PANELS_SEED_TTL = 3600; // 1h
+
+function _mapTokens(ids, meta, byId) {
+  const tokens = [];
+  for (const id of ids) {
+    const coin = byId.get(id);
+    if (!coin) continue;
+    const m = meta[id];
+    tokens.push({
+      name: m?.name || coin.name || id,
+      symbol: m?.symbol || (coin.symbol || id).toUpperCase(),
+      price: coin.current_price ?? 0,
+      change24h: coin.price_change_percentage_24h ?? 0,
+      change7d: coin.price_change_percentage_7d_in_currency ?? 0,
+    });
+  }
+  return tokens;
+}
+
+async function seedTokenPanels() {
+  const allIds = [...new Set([..._defiCfg.ids, ..._aiCfg.ids, ..._otherCfg.ids])];
+  let data;
+  try {
+    const apiKey = process.env.COINGECKO_API_KEY;
+    const base = apiKey ? 'https://pro-api.coingecko.com/api/v3' : 'https://api.coingecko.com/api/v3';
+    const headers = { Accept: 'application/json' };
+    if (apiKey) headers['x-cg-pro-api-key'] = apiKey;
+    const url = `${base}/coins/markets?vs_currency=usd&ids=${allIds.join(',')}&order=market_cap_desc&sparkline=false&price_change_percentage=24h,7d`;
+    data = await cyberHttpGetJson(url, headers, 15000);
+    if (!Array.isArray(data) || data.length === 0) throw new Error('CoinGecko returned no data');
+  } catch (err) {
+    console.warn(`[TokenPanels] CoinGecko failed: ${err.message} — skipping`);
+    return 0;
+  }
+  const byId = new Map(data.map((c) => [c.id, c]));
+  const defi = { tokens: _mapTokens(_defiCfg.ids, _defiCfg.meta, byId) };
+  const ai = { tokens: _mapTokens(_aiCfg.ids, _aiCfg.meta, byId) };
+  const other = { tokens: _mapTokens(_otherCfg.ids, _otherCfg.meta, byId) };
+  if (defi.tokens.length === 0 && ai.tokens.length === 0 && other.tokens.length === 0) {
+    console.warn('[TokenPanels] All panels empty after mapping — skipping Redis write to preserve cached data');
+    return 0;
+  }
+  const ok1 = await upstashSet('market:defi-tokens:v1', defi, TOKEN_PANELS_SEED_TTL);
+  const ok2 = await upstashSet('market:ai-tokens:v1', ai, TOKEN_PANELS_SEED_TTL);
+  const ok3 = await upstashSet('market:other-tokens:v1', other, TOKEN_PANELS_SEED_TTL);
+  await upstashSet('seed-meta:market:token-panels', { fetchedAt: Date.now(), recordCount: defi.tokens.length + ai.tokens.length + other.tokens.length }, 604800);
+  const total = defi.tokens.length + ai.tokens.length + other.tokens.length;
+  const allOk = ok1 && ok2 && ok3;
+  console.log(`[TokenPanels] Seeded ${defi.tokens.length} DeFi, ${ai.tokens.length} AI, ${other.tokens.length} Other (${total} total, redis: ${allOk ? 'OK' : 'PARTIAL'})`);
+  return total;
+}
+
 async function seedAllMarketData() {
   const t0 = Date.now();
   const q = await seedMarketQuotes();
@@ -1649,7 +1756,9 @@ async function seedAllMarketData() {
   const e = await seedEtfFlows();
   const cr = await seedCryptoQuotes();
   const sc = await seedStablecoinMarkets();
-  console.log(`[Market] Seed complete: ${q} quotes, ${c} commodities, ${s} sectors, ${g} gulf, ${e} etf, ${cr} crypto, ${sc} stablecoins (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  const cs = await seedCryptoSectors();
+  const tp = await seedTokenPanels();
+  console.log(`[Market] Seed complete: ${q} quotes, ${c} commodities, ${s} sectors, ${g} gulf, ${e} etf, ${cr} crypto, ${sc} stablecoins, ${cs} crypto-sectors, ${tp} token-panels (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 }
 
 async function startMarketDataSeedLoop() {
@@ -1674,7 +1783,7 @@ async function startMarketDataSeedLoop() {
 // ─────────────────────────────────────────────────────────────
 const AVIATIONSTACK_API_KEY = process.env.AVIATIONSTACK_API || '';
 const AVIATION_SEED_INTERVAL_MS = 30 * 60 * 1000; // 30min
-const AVIATION_SEED_TTL = 3600; // 1h — survives 1 missed cycle
+const AVIATION_SEED_TTL = 10800; // 3h — 6x interval; survives ~5 consecutive missed pings
 const AVIATION_REDIS_KEY = 'aviation:delays:intl:v3';
 const AVIATION_BATCH_CONCURRENCY = 10;
 const AVIATION_MIN_FLIGHTS_FOR_CLOSURE = 10;
@@ -1943,7 +2052,7 @@ async function startAviationSeedLoop() {
 // so Vercel handler and map layer serve from cache (ICAO API times out from edge)
 // ─────────────────────────────────────────────────────────────
 const NOTAM_SEED_INTERVAL_MS = 30 * 60 * 1000; // 30min
-const NOTAM_SEED_TTL = 3600; // 1h — survives 1 missed cycle
+const NOTAM_SEED_TTL = 10800; // 3h — 6x interval; survives ~5 consecutive missed pings
 const NOTAM_REDIS_KEY = 'aviation:notam:closures:v2';
 const NOTAM_CLOSURE_QCODES = new Set(['FA', 'AH', 'AL', 'AW', 'AC', 'AM']);
 const NOTAM_MONITORED_ICAO = [
@@ -2071,7 +2180,7 @@ const URLHAUS_AUTH_KEY = process.env.URLHAUS_AUTH_KEY || '';
 const OTX_API_KEY = process.env.OTX_API_KEY || '';
 const ABUSEIPDB_API_KEY = process.env.ABUSEIPDB_API_KEY || '';
 const CYBER_SEED_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2h — matches IOC feed update cadence
-const CYBER_SEED_TTL = 10800; // 3h — survives 1 missed cycle
+const CYBER_SEED_TTL = 14400; // 4h — must outlive the 2h seed interval (2x)
 const CYBER_RPC_KEY = 'cyber:threats:v2'; // must match handler REDIS_CACHE_KEY in list-cyber-threats.ts
 const CYBER_BOOTSTRAP_KEY = 'cyber:threats-bootstrap:v2';
 const CYBER_MAX_CACHED = 2000;
@@ -2861,7 +2970,7 @@ const THEATER_POSTURE_SEED_INTERVAL_MS = 600_000; // 10 min
 const THEATER_POSTURE_LIVE_KEY = 'theater-posture:sebuf:v1';
 const THEATER_POSTURE_STALE_KEY = 'theater_posture:sebuf:stale:v1';
 const THEATER_POSTURE_BACKUP_KEY = 'theater-posture:sebuf:backup:v1';
-const THEATER_POSTURE_LIVE_TTL = 900;    // 15 min
+const THEATER_POSTURE_LIVE_TTL = 1200;   // 20 min — must outlive the 10-min seed interval (2x)
 const THEATER_POSTURE_STALE_TTL = 86400; // 24h
 const THEATER_POSTURE_BACKUP_TTL = 604800; // 7d
 
@@ -2934,6 +3043,102 @@ const THEATER_QUERY_REGIONS = [
   { name: 'WESTERN', lamin: 10, lamax: 66, lomin: 9, lomax: 66 },
   { name: 'PACIFIC', lamin: 4, lamax: 44, lomin: 104, lomax: 133 },
 ];
+
+async function handleWingbitsTrackRequest(req, res) {
+  const apiKey = process.env.WINGBITS_API_KEY;
+  if (!apiKey) {
+    return safeEnd(res, 503, { 'Content-Type': 'application/json' },
+      JSON.stringify({ error: 'WINGBITS_API_KEY not configured', positions: [] }));
+  }
+
+  const url = new URL(req.url, 'http://localhost');
+  const params = url.searchParams;
+  const laminStr = params.get('lamin');
+  const lominStr = params.get('lomin');
+  const lamaxStr = params.get('lamax');
+  const lomaxStr = params.get('lomax');
+
+  if (!laminStr || !lominStr || !lamaxStr || !lomaxStr) {
+    return safeEnd(res, 400, { 'Content-Type': 'application/json' },
+      JSON.stringify({ error: 'Missing bbox params: lamin, lomin, lamax, lomax', positions: [] }));
+  }
+
+  const lamin = Number(laminStr);
+  const lomin = Number(lominStr);
+  const lamax = Number(lamaxStr);
+  const lomax = Number(lomaxStr);
+
+  if (!Number.isFinite(lamin) || !Number.isFinite(lomin) || !Number.isFinite(lamax) || !Number.isFinite(lomax)) {
+    return safeEnd(res, 400, { 'Content-Type': 'application/json' },
+      JSON.stringify({ error: 'Invalid bbox params: must be finite numbers', positions: [] }));
+  }
+
+  const centerLat = (lamin + lamax) / 2;
+  const centerLon = (lomin + lomax) / 2;
+  const widthNm = Math.abs(lomax - lomin) * 60 * Math.cos(centerLat * Math.PI / 180);
+  const heightNm = Math.abs(lamax - lamin) * 60;
+  const areas = [{ alias: 'viewport', by: 'box', la: centerLat, lo: centerLon, w: widthNm, h: heightNm, unit: 'nm' }];
+
+  try {
+    const resp = await fetch('https://customer-api.wingbits.com/v1/flights', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': CHROME_UA },
+      body: JSON.stringify(areas),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!resp.ok) {
+      console.warn(`[Wingbits Track] API error: ${resp.status}`);
+      return safeEnd(res, 502, { 'Content-Type': 'application/json' },
+        JSON.stringify({ error: `Wingbits API ${resp.status}`, positions: [] }));
+    }
+
+    const data = await resp.json();
+    if (!Array.isArray(data)) {
+      console.warn(`[Wingbits Track] Unexpected response shape: ${JSON.stringify(data).slice(0, 200)}`);
+      return safeEnd(res, 502, { 'Content-Type': 'application/json' },
+        JSON.stringify({ error: 'Wingbits returned non-array response', positions: [] }));
+    }
+    const positions = [];
+    const seenIds = new Set();
+    const now = Date.now();
+
+    for (const areaResult of data) {
+      const flightList = Array.isArray(areaResult.data) ? areaResult.data
+        : Array.isArray(areaResult.flights) ? areaResult.flights
+        : Array.isArray(areaResult) ? areaResult : [];
+      for (const f of flightList) {
+        const icao24 = f.h || f.icao24 || f.id || '';
+        if (!icao24 || seenIds.has(icao24)) continue;
+        seenIds.add(icao24);
+        const lat = f.la ?? f.latitude ?? f.lat ?? 0;
+        const lon = f.lo ?? f.longitude ?? f.lon ?? f.lng ?? 0;
+        positions.push({
+          icao24,
+          callsign: (f.f || f.callsign || f.flight || '').trim(),
+          lat,
+          lon,
+          altitudeM: (f.ab ?? f.altitude ?? f.alt ?? 0) * 0.3048,
+          groundSpeedKts: f.gs ?? f.groundSpeed ?? f.speed ?? 0,
+          trackDeg: f.th ?? f.heading ?? f.track ?? 0,
+          verticalRate: 0,
+          onGround: f.og ?? f.gr ?? f.onGround ?? false,
+          source: 'POSITION_SOURCE_WINGBITS',
+          observedAt: f.ra ? new Date(f.ra).getTime() : now,
+        });
+      }
+    }
+
+    logThrottled('log', 'wingbits-track', `[Wingbits Track] ${positions.length} flights for bbox ${lamin},${lomin},${lamax},${lomax}`);
+    return sendCompressed(req, res, 200,
+      { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30', 'CDN-Cache-Control': 'public, max-age=15' },
+      JSON.stringify({ positions, source: 'wingbits' }));
+  } catch (err) {
+    console.warn(`[Wingbits Track] Error: ${err?.message || err}`);
+    return safeEnd(res, 503, { 'Content-Type': 'application/json' },
+      JSON.stringify({ error: `Wingbits fetch failed: ${err?.message}`, positions: [] }));
+  }
+}
 
 async function fetchTheaterFlightsFromOpenSky() {
   const seenIds = new Set();
@@ -3025,6 +3230,29 @@ async function fetchTheaterFlightsFromWingbits() {
   }
 }
 
+function isStrictMilitaryVessel(v) {
+  const shipType = Number(v.shipType);
+  // Only shipType 35 (military) and 55 (law enforcement) are reliable; 50-59 includes
+  // tugs, pilot boats, and SAR craft that inflate counts in busy maritime theaters.
+  if (shipType === 35 || shipType === 55) return true;
+  // Named naval vessels (USS, HMS, PLA, etc.) are reliable regardless of shipType
+  if (v.name && NAVAL_PREFIX_RE.test(v.name.trim().toUpperCase())) return true;
+  return false;
+}
+
+function countMilitaryVesselsInBounds(bounds) {
+  let count = 0;
+  const cutoff = Date.now() - 6 * 60 * 60 * 1000;
+  for (const v of candidateReports.values()) {
+    if ((v.timestamp || 0) < cutoff) continue;
+    if (!isStrictMilitaryVessel(v)) continue;
+    if (v.lat >= bounds.south && v.lat <= bounds.north && v.lon >= bounds.west && v.lon <= bounds.east) {
+      count++;
+    }
+  }
+  return count;
+}
+
 function calculateTheaterPostures(flights) {
   return POSTURE_THEATERS.map((theater) => {
     const tf = flights.filter(
@@ -3035,17 +3263,23 @@ function calculateTheaterPostures(flights) {
     const tankers = tf.filter((f) => f.aircraftType === 'tanker').length;
     const awacs = tf.filter((f) => f.aircraftType === 'awacs').length;
     const fighters = tf.filter((f) => f.aircraftType === 'fighter').length;
-    const postureLevel = total >= theater.thresholds.critical ? 'critical'
-      : total >= theater.thresholds.elevated ? 'elevated' : 'normal';
+    const vesselCount = countMilitaryVesselsInBounds(theater.bounds);
+    // Thresholds were calibrated for flight counts; cap vessel contribution at half the
+    // elevated threshold to avoid naval traffic dominating posture in maritime theaters.
+    const vesselContribution = Math.min(vesselCount, Math.floor(theater.thresholds.elevated / 2));
+    const combinedActivity = total + vesselContribution;
+    const postureLevel = combinedActivity >= theater.thresholds.critical ? 'critical'
+      : combinedActivity >= theater.thresholds.elevated ? 'elevated' : 'normal';
     const strikeCapable = tankers >= theater.strikeIndicators.minTankers &&
       awacs >= theater.strikeIndicators.minAwacs && fighters >= theater.strikeIndicators.minFighters;
     const ops = [];
     if (strikeCapable) ops.push('strike_capable');
     if (tankers > 0) ops.push('aerial_refueling');
     if (awacs > 0) ops.push('airborne_early_warning');
+    if (vesselCount > 0) ops.push('naval_presence');
     return {
       theater: theater.id, postureLevel, activeFlights: total,
-      trackedVessels: 0, activeOperations: ops, assessedAt: Date.now(),
+      trackedVessels: vesselCount, activeOperations: ops, assessedAt: Date.now(),
     };
   });
 }
@@ -3062,18 +3296,18 @@ async function seedTheaterPosture() {
     if (wb && wb.length > 0) flights = wb;
   }
   if (flights.length === 0) {
-    console.warn('[TheaterPosture] No military flights from OpenSky or Wingbits — skipping');
-    return;
+    console.warn('[TheaterPosture] No military flights from OpenSky or Wingbits — continuing with vessel-only posture');
   }
   const theaters = calculateTheaterPostures(flights);
+  const totalVessels = theaters.reduce((sum, t) => sum + t.trackedVessels, 0);
   const payload = { theaters };
   const ok1 = await upstashSet(THEATER_POSTURE_LIVE_KEY, payload, THEATER_POSTURE_LIVE_TTL);
   const ok2 = await upstashSet(THEATER_POSTURE_STALE_KEY, payload, THEATER_POSTURE_STALE_TTL);
   const ok3 = await upstashSet(THEATER_POSTURE_BACKUP_KEY, payload, THEATER_POSTURE_BACKUP_TTL);
-  await upstashSet('seed-meta:theater-posture', { fetchedAt: Date.now(), recordCount: flights.length }, 604800);
+  await upstashSet('seed-meta:theater-posture', { fetchedAt: Date.now(), recordCount: flights.length + totalVessels }, 604800);
   const elevated = theaters.filter((t) => t.postureLevel !== 'normal').length;
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-  console.log(`[TheaterPosture] Seeded ${flights.length} mil flights, ${theaters.length} theaters (${elevated} elevated), redis: ${ok1 && ok2 && ok3 ? 'OK' : 'PARTIAL'} [${elapsed}s]`);
+  console.log(`[TheaterPosture] Seeded ${flights.length} mil flights, ${totalVessels} vessels, ${theaters.length} theaters (${elevated} elevated), redis: ${ok1 && ok2 && ok3 ? 'OK' : 'PARTIAL'} [${elapsed}s]`);
 }
 
 function startTheaterPostureSeedLoop() {
@@ -3213,7 +3447,7 @@ function startCableHealthWarmPingLoop() {
 // ─────────────────────────────────────────────────────────────
 const WEATHER_SEED_INTERVAL_MS = 15 * 60 * 1000; // 15 min
 const WEATHER_REDIS_KEY = 'weather:alerts:v1';
-const WEATHER_CACHE_TTL = 900;
+const WEATHER_CACHE_TTL = 5400; // 1.5h — 6x interval; survives ~5 consecutive missed pings
 let weatherSeedInFlight = false;
 
 async function seedWeatherAlerts() {
@@ -3284,7 +3518,7 @@ async function startWeatherSeedLoop() {
 // ─────────────────────────────────────────────────────────────
 const SPENDING_SEED_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const SPENDING_REDIS_KEY = 'economic:spending:v1';
-const SPENDING_CACHE_TTL = 3600;
+const SPENDING_CACHE_TTL = 7200; // 2h — must outlive the 1h seed interval
 let spendingSeedInFlight = false;
 
 function getDateDaysAgo(days) {
@@ -4067,7 +4301,7 @@ async function startCorridorRiskSeedLoop() {
 const USNI_URL = 'https://news.usni.org/wp-json/wp/v2/posts?categories=4137&per_page=1';
 const USNI_REDIS_KEY = 'usni-fleet:sebuf:v1';
 const USNI_STALE_KEY = 'usni-fleet:sebuf:stale:v1';
-const USNI_TTL = 25200; // 7h
+const USNI_TTL = 43200; // 12h — must outlive the 6h seed interval (2x)
 const USNI_STALE_TTL = 604800; // 7 days
 const USNI_SEED_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 
@@ -4245,25 +4479,23 @@ async function seedUsniFleet() {
   console.log('[USNI] Fetching fleet tracker...');
   const t0 = Date.now();
   try {
-    const proxyAuth = process.env.RESIDENTIAL_PROXY_AUTH || OREF_PROXY_AUTH;
-    if (!proxyAuth) { console.warn('[USNI] No proxy auth configured, skipping'); return; }
-
-    let raw;
-    try {
-      raw = orefCurlFetch(proxyAuth, USNI_URL);
-    } catch (e) {
-      console.warn(`[USNI] curl+proxy failed: ${e.message}, trying direct...`);
-      try {
-        const { execFileSync } = require('child_process');
-        raw = execFileSync('curl', ['-sS', '--compressed', '--max-time', '15',
-          '-H', 'Accept: application/json', '-H', `User-Agent: ${CHROME_UA}`, USNI_URL],
-          { encoding: 'utf8', timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] });
-      } catch (e2) {
-        throw new Error(`All curl attempts failed: ${e2.message}`);
-      }
+    // USNI (WordPress) returns 403 from Railway datacenter IPs via Cloudflare.
+    // Route through the residential proxy when available; fall back to direct for dev.
+    const proxyAuth = process.env.OREF_PROXY_AUTH || OREF_PROXY_AUTH;
+    let wpData;
+    if (proxyAuth) {
+      const proxy = parseProxyUrl(`http://${proxyAuth}`);
+      const result = proxy ? await ytFetchViaProxy(USNI_URL, proxy) : null;
+      if (!result || !result.ok) throw new Error(`proxy HTTP ${result?.status ?? 'unavailable'}`);
+      wpData = JSON.parse(result.body);
+    } else {
+      const res = await fetch(USNI_URL, {
+        headers: { 'User-Agent': CHROME_UA, 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      wpData = await res.json();
     }
-
-    const wpData = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!Array.isArray(wpData) || !wpData.length) throw new Error('No fleet tracker articles');
 
     const post = wpData[0];
@@ -4368,6 +4600,7 @@ function isAuthorizedRequest(req) {
 }
 
 function getRouteGroup(pathname) {
+  if (pathname.startsWith('/wingbits/track')) return 'wingbits';
   if (pathname.startsWith('/opensky')) return 'opensky';
   if (pathname.startsWith('/rss')) return 'rss';
   if (pathname.startsWith('/ais/snapshot')) return 'snapshot';
@@ -4626,7 +4859,7 @@ const TRANSIT_COOLDOWN_MS = 30 * 60 * 1000;
 const TRANSIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MIN_DWELL_MS = 5 * 60 * 1000;
 const CHOKEPOINT_TRANSIT_KEY = 'supply_chain:chokepoint_transits:v1';
-const CHOKEPOINT_TRANSIT_TTL = 900;
+const CHOKEPOINT_TRANSIT_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
 const CHOKEPOINT_TRANSIT_INTERVAL_MS = 10 * 60 * 1000;
 
 const NAVAL_PREFIX_RE = /^(USS|USNS|HMS|HMAS|HMCS|INS|JS|ROKS|TCG|FS|BNS|RFS|PLAN|PLA|CGC|PNS|KRI|ITS|SNS|MMSI)/i;
@@ -5134,7 +5367,7 @@ setInterval(() => {
 
 // --- Pre-assembled Transit Summaries (Railway advantage: avoids large Redis reads on Vercel) ---
 const TRANSIT_SUMMARY_REDIS_KEY = 'supply_chain:transit-summaries:v1';
-const TRANSIT_SUMMARY_TTL = 900; // 15 min
+const TRANSIT_SUMMARY_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
 const TRANSIT_SUMMARY_INTERVAL_MS = 10 * 60 * 1000;
 
 // Threat levels for anomaly detection.
@@ -7436,6 +7669,8 @@ const server = http.createServer(async (req, res) => {
     }
   } else if (pathname.startsWith('/ucdp-events')) {
     handleUcdpEventsRequest(req, res);
+  } else if (pathname.startsWith('/wingbits/track')) {
+    handleWingbitsTrackRequest(req, res);
   } else if (pathname.startsWith('/opensky')) {
     handleOpenSkyRequest(req, res, PORT);
   } else if (pathname.startsWith('/worldbank')) {
@@ -7516,9 +7751,76 @@ const WIDGET_SYSTEM_PROMPT = `You are a WorldMonitor widget builder. Your job is
 Use search_web for: breaking news, weather, sports, elections, specific events, company news, scientific reports, geopolitical updates, sanctions, disasters, or any real-time topic.
 Results include: title, url, snippet, publishedDate. Embed this data directly into the widget HTML.
 
-## Design system CSS classes
-Use ONLY these classes (no inline styles except var() references):
+## Visual design — CRITICAL (match the dashboard exactly)
 
+This widget renders inside a dark monospace terminal dashboard. Every pixel must match the existing panels (Sector Heatmap, Gulf Economies, Markets, etc.). Drift in font, color, or spacing is the #1 failure mode.
+
+### Font
+NEVER set font-family. The parent container uses a monospace font ('SF Mono', Monaco, etc.) — your HTML inherits it automatically. Setting any font-family will break the look.
+
+### Colors — CSS variables ONLY
+Never use hex colors (#xxx), rgb(), or named colors in inline styles. Use only:
+- Text: var(--text) #e8e8e8 | var(--text-secondary) #ccc | var(--text-dim) #888 | var(--text-muted) #666
+- Backgrounds: var(--overlay-subtle) for subtle rows | var(--surface) for card bg
+- Borders: var(--border) #2a2a2a | var(--border-subtle) #1a1a1a
+- Positive: var(--green) — or class="change-positive"
+- Negative: var(--red) — or class="change-negative"
+- Accent: var(--widget-accent, var(--accent)) for highlights
+
+### Spacing — compact and tight
+Rows: padding 5–8px vertical, 8px horizontal. Section gaps: 8–12px. NEVER use padding > 12px on rows.
+
+### Border radius — flat, not rounded
+Max 4px. NEVER use border-radius > 4px (no 8px, 12px, 16px rounded cards).
+
+### Labels — uppercase monospace
+Section headers and column labels: font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted)
+
+### Numbers
+Use font-variant-numeric: tabular-nums on all price/number cells.
+
+## Correct HTML patterns (copy these exactly)
+
+Row list (markets, rankings):
+<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 8px;border-bottom:1px solid var(--border-subtle)">
+  <span style="color:var(--text)">Bitcoin (BTC)</span>
+  <span style="display:flex;gap:10px;align-items:center">
+    <span style="color:var(--text);font-variant-numeric:tabular-nums">$45,230</span>
+    <span class="change-positive">+8.45%</span>
+  </span>
+</div>
+
+Section label:
+<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);padding:6px 8px 3px">SECTION TITLE</div>
+
+Stats grid (key metrics):
+<div class="disp-stats-grid">
+  <div class="disp-stat-box"><span class="disp-stat-value">$45.2T</span><span class="disp-stat-label">GDP 2024</span></div>
+  <div class="disp-stat-box"><span class="disp-stat-value change-positive">+2.3%</span><span class="disp-stat-label">Growth</span></div>
+</div>
+
+Table (.trade-tariffs-table is a WRAPPER div around <table>, NOT a class on <table> itself):
+<div class="trade-tariffs-table">
+  <table>
+    <thead><tr><th>COUNTRY</th><th>VALUE</th><th>CHG</th></tr></thead>
+    <tbody>
+      <tr><td>USA</td><td style="font-variant-numeric:tabular-nums">$27.3T</td><td class="change-positive">+2.3%</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Anti-patterns — NEVER do these
+- NEVER: style="font-family:..." — removes monospace look
+- NEVER: style="background:#1a1a2e" or any hex/rgb background color
+- NEVER: style="border-radius:12px" — max is 4px
+- NEVER: style="padding:20px" — rows max 8px padding
+- NEVER: style="color:#3b82f6" — only CSS variables
+- NEVER: style="border:2px solid blue" — only var(--border)
+- NEVER: colored bar charts with bright fills — use var(--green)/var(--red)
+- NEVER: white or light backgrounds — this is a dark theme
+- NEVER: class="trade-tariffs-table" on a <table> — it must wrap a <table>, not be the table itself
+
+## Available CSS classes
 Cards/containers: economic-content, trade-restrictions-list, trade-restriction-card,
   trade-tariffs-table, trade-revenue-summary, trade-revenue-headline, trade-revenue-compare,
   trade-flows-list, trade-flow-card, trade-flow-metrics, trade-flow-metric, trade-flow-label,
@@ -7528,14 +7830,12 @@ Text: economic-empty, economic-footer, economic-source, economic-warning,
   trade-country, trade-badge, trade-status, trade-date, trade-description,
   trade-sector, trade-restriction-header, trade-restriction-body, trade-restriction-footer,
   trade-revenue-label, trade-revenue-value, trade-chart-col, trade-chart-bar,
-  trade-chart-label, trade-chart-spike, disp-stats-grid, disp-stat,
+  trade-chart-label, trade-chart-spike, disp-stats-grid, disp-stat-box,
   disp-stat-value, disp-stat-label, change-positive, change-negative
 
 Market items: market-item, market-item-name, market-item-price, market-item-change
 
 Status: status-active, status-notified, status-terminated, panel-tabs, panel-tab
-
-Use var(--widget-accent, var(--accent)) for themed highlights.
 
 ## Output format
 1. First line MUST be: <!-- title: Your Widget Title -->
@@ -7945,10 +8245,19 @@ Generate ONLY the <body> content — NO <!DOCTYPE>, NO <html>, NO <head> wrapper
 - Inline <script> tags are allowed
 - Interactive elements are encouraged: sort buttons, tabs, tooltips, animated counters
 
-## Design
-- Dark theme already applied by host page (background #0a0e14, color #e0e0e0)
+## Design — match the dashboard (CRITICAL)
+The iframe host page already applies: background #0a0a0a, color #e8e8e8, monospace font stack, font-size 12px.
+CSS variables are pre-defined in the iframe: --bg, --surface, --text, --text-secondary, --text-dim, --text-muted, --border, --border-subtle, --green (#44ff88), --red (#ff4444), --overlay-subtle.
+
+- ALWAYS use these CSS variables for colors — never hardcode hex values like #3b82f6, #1a1a2e, etc.
+- NEVER override font-family (the monospace stack is already set — do not change it)
+- NEVER use border-radius > 4px (no large rounded cards)
+- Keep row padding tight: 5–8px vertical, 8px horizontal
+- Labels: text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; color: var(--text-muted)
+- Numbers/prices: font-variant-numeric: tabular-nums
+- Positive values: color: var(--green) | Negative values: color: var(--red)
 - Design for 400px height with overflow-y: auto for larger content
-- Use inline styles (no external CSS)
+- Use inline styles referencing CSS variables only — NEVER add a <style> block (it loads after the head CSS and will override the monospace font and dark palette)
 - Always include a source footer
 
 ## Output format

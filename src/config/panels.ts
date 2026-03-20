@@ -64,6 +64,7 @@ const FULL_PANELS: Record<string, PanelConfig> = {
   'security-advisories': { name: 'Security Advisories', enabled: true, priority: 2 },
   'sanctions-pressure': { name: 'Sanctions Pressure', enabled: true, priority: 2 },
   'radiation-watch': { name: 'Radiation Watch', enabled: true, priority: 2 },
+  'thermal-escalation': { name: 'Thermal Escalation', enabled: true, priority: 2 },
   'oref-sirens': { name: 'Israel Sirens', enabled: true, priority: 2, ...(_desktop && { premium: 'locked' as const }) },
   'telegram-intel': { name: 'Telegram Intel', enabled: true, priority: 2, ...(_desktop && { premium: 'locked' as const }) },
   'airline-intel': { name: 'Airline Intelligence', enabled: true, priority: 2 },
@@ -130,6 +131,7 @@ const FULL_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 const FULL_MOBILE_MAP_LAYERS: MapLayers = {
@@ -191,6 +193,7 @@ const FULL_MOBILE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 // ============================================
@@ -294,6 +297,7 @@ const TECH_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 const TECH_MOBILE_MAP_LAYERS: MapLayers = {
@@ -354,6 +358,7 @@ const TECH_MOBILE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 // ============================================
@@ -377,6 +382,10 @@ const FINANCE_PANELS: Record<string, PanelConfig> = {
   'commodities-news': { name: 'Commodities News', enabled: true, priority: 2 },
   crypto: { name: 'Crypto & Digital Assets', enabled: true, priority: 1 },
   'crypto-news': { name: 'Crypto News', enabled: true, priority: 2 },
+  'crypto-heatmap': { name: 'Crypto Sectors', enabled: true, priority: 1 },
+  'defi-tokens': { name: 'DeFi Tokens', enabled: true, priority: 2 },
+  'ai-tokens': { name: 'AI Tokens', enabled: true, priority: 2 },
+  'other-tokens': { name: 'Alt Tokens', enabled: true, priority: 2 },
   centralbanks: { name: 'Central Bank Watch', enabled: true, priority: 1 },
   economic: { name: 'Macro Stress', enabled: true, priority: 1 },
   'trade-policy': { name: 'Trade Policy', enabled: true, priority: 1 },
@@ -460,6 +469,7 @@ const FINANCE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 const FINANCE_MOBILE_MAP_LAYERS: MapLayers = {
@@ -520,6 +530,7 @@ const FINANCE_MOBILE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 // ============================================
@@ -596,6 +607,7 @@ const HAPPY_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 const HAPPY_MOBILE_MAP_LAYERS: MapLayers = {
@@ -656,6 +668,7 @@ const HAPPY_MOBILE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: false,
   webcams: false,
+  weatherRadar: false,
 };
 
 // ============================================
@@ -748,6 +761,7 @@ const COMMODITY_MAP_LAYERS: MapLayers = {
   processingPlants: true,
   commodityPorts: true,
   webcams: false,
+  weatherRadar: false,
 };
 
 const COMMODITY_MOBILE_MAP_LAYERS: MapLayers = {
@@ -808,6 +822,7 @@ const COMMODITY_MOBILE_MAP_LAYERS: MapLayers = {
   processingPlants: false,
   commodityPorts: true,
   webcams: false,
+  weatherRadar: false,
 };
 
 // ============================================
@@ -995,7 +1010,7 @@ export const PANEL_CATEGORY_MAP: Record<string, { labelKey: string; panelKeys: s
   },
   cryptoDigital: {
     labelKey: 'header.panelCatCryptoDigital',
-    panelKeys: ['crypto', 'crypto-news', 'etf-flows', 'stablecoins', 'fintech'],
+    panelKeys: ['crypto', 'crypto-heatmap', 'defi-tokens', 'ai-tokens', 'other-tokens', 'crypto-news', 'etf-flows', 'stablecoins', 'fintech'],
     variants: ['finance'],
   },
   centralBanksEcon: {

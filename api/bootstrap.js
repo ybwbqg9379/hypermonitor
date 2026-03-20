@@ -1,4 +1,4 @@
-import { getCorsHeaders, isDisallowedOrigin } from './_cors.js';
+import { getCorsHeaders, getPublicCorsHeaders, isDisallowedOrigin } from './_cors.js';
 import { validateApiKey } from './_api-key.js';
 import { jsonResponse } from './_json-response.js';
 
@@ -36,8 +36,12 @@ const BOOTSTRAP_CACHE_KEYS = {
   flightDelays: 'aviation:delays-bootstrap:v1',
   insights: 'news:insights:v1',
   predictions: 'prediction:markets-bootstrap:v1',
-  cryptoQuotes: 'market:crypto:v1',
-  gulfQuotes: 'market:gulf-quotes:v1',
+  cryptoQuotes:     'market:crypto:v1',
+  cryptoSectors:    'market:crypto-sectors:v1',
+  defiTokens:       'market:defi-tokens:v1',
+  aiTokens:         'market:ai-tokens:v1',
+  otherTokens:      'market:other-tokens:v1',
+  gulfQuotes:       'market:gulf-quotes:v1',
   stablecoinMarkets: 'market:stablecoins:v1',
   unrestEvents: 'unrest:events:v1',
   iranEvents: 'conflict:iran-events:v1',
@@ -60,7 +64,8 @@ const SLOW_KEYS = new Set([
   'radiationWatch', 'thermalEscalation',
   'cyberThreats', 'techReadiness', 'progressData', 'renewableEnergy',
   'naturalEvents',
-  'cryptoQuotes', 'gulfQuotes', 'stablecoinMarkets', 'unrestEvents', 'ucdpEvents',
+  'cryptoQuotes', 'cryptoSectors', 'defiTokens', 'aiTokens', 'otherTokens',
+  'gulfQuotes', 'stablecoinMarkets', 'unrestEvents', 'ucdpEvents',
   'techEvents',
   'securityAdvisories',
   'customsRevenue',
@@ -73,9 +78,12 @@ const FAST_KEYS = new Set([
   'correlationCards', 'forecasts', 'shippingRates',
 ]);
 
+// No public/s-maxage: CF (in front of api.worldmonitor.app) ignores Vary: Origin and would
+// pin ACAO: worldmonitor.app on cached responses, breaking CORS for preview deployments.
+// Vercel CDN caching is handled by TIER_CDN_CACHE via CDN-Cache-Control below.
 const TIER_CACHE = {
-  slow: 'public, s-maxage=3600, stale-while-revalidate=600, stale-if-error=3600',
-  fast: 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900',
+  slow: 'max-age=300, stale-while-revalidate=600, stale-if-error=3600',
+  fast: 'max-age=60, stale-while-revalidate=120, stale-if-error=900',
 };
 const TIER_CDN_CACHE = {
   slow: 'public, s-maxage=7200, stale-while-revalidate=1800, stale-if-error=7200',
@@ -171,8 +179,12 @@ export default async function handler(req) {
 
   const cacheControl = (tier && TIER_CACHE[tier]) || 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900';
 
+  // Bootstrap data is fully public (world events, market prices, seismic data).
+  // Use ACAO: * so CF caches one entry valid for all origins, including Vercel
+  // preview deployments. Per-origin ACAO with Vary: Origin causes CF to pin the
+  // first origin's ACAO on the cached response, breaking CORS for other origins.
   return jsonResponse({ data, missing }, 200, {
-    ...cors,
+    ...getPublicCorsHeaders(),
     'Cache-Control': cacheControl,
     'CDN-Cache-Control': (tier && TIER_CDN_CACHE[tier]) || TIER_CDN_CACHE.fast,
   });

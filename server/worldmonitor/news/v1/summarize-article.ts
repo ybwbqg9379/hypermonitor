@@ -14,6 +14,7 @@ import {
 } from './_shared';
 import { CHROME_UA } from '../../../_shared/constants';
 import { isProviderAvailable } from '../../../_shared/llm-health';
+import { sanitizeHeadlinesLight, sanitizeHeadlines, sanitizeForPrompt } from '../../../_shared/llm-sanitize.js';
 
 // ======================================================================
 // Reasoning preamble detection
@@ -38,14 +39,23 @@ export async function summarizeArticle(
 ): Promise<SummarizeArticleResponse> {
   const { provider, mode = 'brief', geoContext = '', variant = 'full', lang = 'en' } = req;
 
-  // Input sanitization (M-14 fix): limit headline count and length
   const MAX_HEADLINES = 10;
   const MAX_HEADLINE_LEN = 500;
   const MAX_GEO_CONTEXT_LEN = 2000;
-  const headlines = (req.headlines || [])
-    .slice(0, MAX_HEADLINES)
-    .map(h => typeof h === 'string' ? h.slice(0, MAX_HEADLINE_LEN) : '');
-  const sanitizedGeoContext = typeof geoContext === 'string' ? geoContext.slice(0, MAX_GEO_CONTEXT_LEN) : '';
+
+  // Bounded raw headlines — used for cache key so browser/server keys agree.
+  // Only structural patterns stripped (delimiters, control chars); semantic
+  // phrases kept intact to avoid mangling legitimate security news headlines.
+  const headlines = sanitizeHeadlinesLight(
+    (req.headlines || [])
+      .slice(0, MAX_HEADLINES)
+      .map(h => typeof h === 'string' ? h.slice(0, MAX_HEADLINE_LEN) : ''),
+  );
+
+  // geoContext gets full injection sanitization — it is free-form user text.
+  const sanitizedGeoContext = sanitizeForPrompt(
+    typeof geoContext === 'string' ? geoContext.slice(0, MAX_GEO_CONTEXT_LEN) : '',
+  );
 
   // Provider credential check
   const skipReasons: Record<string, string> = {
@@ -97,8 +107,13 @@ export async function summarizeArticle(
       async () => {
         // Health gate inside fetcher — only runs on cache miss
         if (!(await isProviderAvailable(apiUrl))) return null;
-        const uniqueHeadlines = deduplicateHeadlines(headlines.slice(0, 5));
-        const { systemPrompt, userPrompt } = buildArticlePrompts(headlines, uniqueHeadlines, {
+        // Full injection sanitization applied at prompt-build time only.
+        // Headlines are re-sanitized here (not at cache-key time) so that
+        // the cache key stays aligned with the browser while the actual
+        // prompt is protected against semantic injection phrases.
+        const promptHeadlines = sanitizeHeadlines(headlines);
+        const uniqueHeadlines = deduplicateHeadlines(promptHeadlines.slice(0, 5));
+        const { systemPrompt, userPrompt } = buildArticlePrompts(promptHeadlines, uniqueHeadlines, {
           mode,
           geoContext: sanitizedGeoContext,
           variant,

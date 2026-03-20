@@ -107,6 +107,13 @@ function donutGaugeSvg(value: number | null, size = 48): string {
   </svg>`;
 }
 
+function fgSparklineColor(status: string): string {
+  const s = status.toUpperCase();
+  if (['GREED', 'EXTREME GREED'].includes(s)) return '#4caf50';
+  if (['FEAR', 'EXTREME FEAR'].includes(s)) return '#f44336';
+  return '#4fc3f7';
+}
+
 function statusBadgeClass(status: string): string {
   const s = status.toUpperCase();
   if (['BULLISH', 'RISK-ON', 'GROWING', 'PROFITABLE', 'ALIGNED', 'NORMAL', 'EXTREME GREED', 'GREED'].includes(s)) return 'badge-bullish';
@@ -230,7 +237,10 @@ export class MacroSignalsPanel extends Panel {
           <span class="signal-badge ${badgeClass}">${escapeHtml(fg.status)}</span>
         </div>
         <div class="signal-body signal-body-fg">
-          ${donutGaugeSvg(fg.value)}
+          <div style="display:flex;align-items:center;gap:8px">
+            ${donutGaugeSvg(fg.value)}
+            ${sparklineSvg(fg.history.map(h => h.value), 80, 28, fgSparklineColor(fg.status))}
+          </div>
         </div>
         <div class="signal-detail">
           <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener">alternative.me</a>

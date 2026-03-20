@@ -24,23 +24,30 @@ export const serverOptions: ServerOptions = { onError: mapErrorToResponse };
 // NOTE: This map is shared across all domain bundles (~3KB). Kept centralised for
 // single-source-of-truth maintainability; the size is negligible vs handler code.
 
-type CacheTier = 'fast' | 'medium' | 'slow' | 'static' | 'daily' | 'no-store';
+type CacheTier = 'fast' | 'medium' | 'slow' | 'slow-browser' | 'static' | 'daily' | 'no-store';
 
+// Browser-only cache: no `public` or `s-maxage` so Cloudflare (which ignores
+// Vary: Origin) does NOT cache these responses. CF sits in front of api.worldmonitor.app
+// and would otherwise pin ACAO: worldmonitor.app on the cached response, breaking CORS
+// for preview deployments. Vercel CDN caching is handled separately by CDN-Cache-Control.
 const TIER_HEADERS: Record<CacheTier, string> = {
-  fast: 'public, s-maxage=300, stale-while-revalidate=60, stale-if-error=600',
-  medium: 'public, s-maxage=600, stale-while-revalidate=120, stale-if-error=900',
-  slow: 'public, s-maxage=1800, stale-while-revalidate=300, stale-if-error=3600',
-  static: 'public, s-maxage=7200, stale-while-revalidate=600, stale-if-error=14400',
-  daily: 'public, s-maxage=86400, stale-while-revalidate=7200, stale-if-error=172800',
+  fast: 'max-age=60, stale-while-revalidate=60, stale-if-error=600',
+  medium: 'max-age=120, stale-while-revalidate=120, stale-if-error=900',
+  slow: 'max-age=300, stale-while-revalidate=300, stale-if-error=3600',
+  'slow-browser': 'max-age=300, stale-while-revalidate=60, stale-if-error=1800',
+  static: 'max-age=600, stale-while-revalidate=600, stale-if-error=14400',
+  daily: 'max-age=3600, stale-while-revalidate=7200, stale-if-error=172800',
   'no-store': 'no-store',
 };
 
-// Cloudflare-specific cache TTLs — more aggressive than s-maxage since CF can
-// revalidate via ETag/If-None-Match without full payload transfer.
+// Vercel CDN-specific cache TTLs — CDN-Cache-Control overrides Cache-Control for
+// Vercel's own edge cache, so Vercel can still cache aggressively (and respects
+// Vary: Origin correctly) while CF sees no public s-maxage and passes through.
 const TIER_CDN_CACHE: Record<CacheTier, string | null> = {
   fast: 'public, s-maxage=600, stale-while-revalidate=300, stale-if-error=1200',
   medium: 'public, s-maxage=1200, stale-while-revalidate=600, stale-if-error=1800',
   slow: 'public, s-maxage=3600, stale-while-revalidate=900, stale-if-error=7200',
+  'slow-browser': 'public, s-maxage=900, stale-while-revalidate=60, stale-if-error=1800',
   static: 'public, s-maxage=14400, stale-while-revalidate=3600, stale-if-error=28800',
   daily: 'public, s-maxage=86400, stale-while-revalidate=14400, stale-if-error=172800',
   'no-store': null,
@@ -51,6 +58,10 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
 
   '/api/market/v1/list-market-quotes': 'medium',
   '/api/market/v1/list-crypto-quotes': 'medium',
+  '/api/market/v1/list-crypto-sectors': 'slow',
+  '/api/market/v1/list-defi-tokens': 'slow',
+  '/api/market/v1/list-ai-tokens': 'slow',
+  '/api/market/v1/list-other-tokens': 'slow',
   '/api/market/v1/list-commodity-quotes': 'medium',
   '/api/market/v1/list-stablecoin-markets': 'medium',
   '/api/market/v1/get-sector-summary': 'medium',
@@ -112,6 +123,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/supply-chain/v1/get-critical-minerals': 'daily',
   '/api/military/v1/get-aircraft-details': 'static',
   '/api/military/v1/get-wingbits-status': 'static',
+  '/api/military/v1/get-wingbits-live-flight': 'no-store',
 
   '/api/military/v1/list-military-flights': 'slow',
   '/api/market/v1/list-etf-flows': 'slow',
@@ -281,6 +293,11 @@ export function createDomainGateway(
         const cdnCache = TIER_CDN_CACHE[tier];
         if (cdnCache) mergedHeaders.set('CDN-Cache-Control', cdnCache);
         mergedHeaders.set('X-Cache-Tier', tier);
+
+        // Keep per-origin ACAO (already set from corsHeaders above) and preserve Vary: Origin.
+        // ACAO: * with no Vary would collapse all origins into one cache entry, bypassing
+        // isDisallowedOrigin() for cache hits — Vercel CDN serves s-maxage responses without
+        // re-invoking the function, so a disallowed origin could read a cached ACAO: * response.
       }
       mergedHeaders.delete('X-No-Cache');
       if (!new URL(request.url).searchParams.has('_debug')) {

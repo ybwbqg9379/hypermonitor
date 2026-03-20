@@ -50,6 +50,7 @@ export * from './SupplyChainPanel';
 export * from './SecurityAdvisoriesPanel';
 export * from './SanctionsPressurePanel';
 export * from './RadiationWatchPanel';
+export * from './ThermalEscalationPanel';
 export * from './OrefSirensPanel';
 export * from './TelegramIntelPanel';
 export * from './BreakingNewsBanner';

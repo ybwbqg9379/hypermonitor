@@ -275,7 +275,7 @@ export class SupplyChainPanel extends Panel {
       const cards = indices.map(idx => {
         const changeClass = idx.changePct >= 0 ? 'change-positive' : 'change-negative';
         const changeArrow = idx.changePct >= 0 ? '\u25B2' : '\u25BC';
-        const sparkline = this.renderSparkline(idx.history.map(h => h.value));
+        const sparkline = this.renderSparkline(idx.history.map(h => h.value), idx.history.map(h => h.date));
         const spikeBanner = idx.spikeAlert
           ? `<div class="economic-warning">${t('components.supplyChain.spikeAlert')}</div>`
           : '';
@@ -314,7 +314,7 @@ export class SupplyChainPanel extends Panel {
     const cards = econIndices.map(idx => {
       const changeClass = idx.changePct >= 0 ? 'change-positive' : 'change-negative';
       const changeArrow = idx.changePct >= 0 ? '\u25B2' : '\u25BC';
-      const sparkline = this.renderSparkline(idx.history.map(h => h.value));
+      const sparkline = this.renderSparkline(idx.history.map(h => h.value), idx.history.map(h => h.date));
       const spikeBanner = idx.spikeAlert
         ? `<div class="economic-warning">${t('components.supplyChain.spikeAlert')}</div>`
         : '';
@@ -333,21 +333,28 @@ export class SupplyChainPanel extends Panel {
     return `<div class="trade-restrictions-list">${cards}</div>`;
   }
 
-  private renderSparkline(values: number[]): string {
+  private renderSparkline(values: number[], dates?: string[]): string {
     if (values.length < 2) return '';
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min || 1;
     const w = 200;
     const h = 40;
+    const totalH = dates?.length ? h + 14 : h;
     const points = values.map((v, i) => {
       const x = (i / (values.length - 1)) * w;
-      const y = h - ((v - min) / range) * h;
+      const y = h - ((v - min) / range) * (h - 4) - 2;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
 
-    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;margin:4px 0">
+    const dateLabels = dates?.length ? `
+      <text x="0" y="${totalH - 1}" fill="var(--text-dim,#888)" font-size="9" text-anchor="start">${escapeHtml(dates[0]!.slice(0, 7))}</text>
+      <text x="${w}" y="${totalH - 1}" fill="var(--text-dim,#888)" font-size="9" text-anchor="end">${escapeHtml(dates[dates.length - 1]!.slice(0, 7))}</text>
+    ` : '';
+
+    return `<svg width="${w}" height="${totalH}" viewBox="0 0 ${w} ${totalH}" style="display:block;margin:4px 0">
       <polyline points="${points}" fill="none" stroke="var(--accent-primary, #4fc3f7)" stroke-width="1.5" />
+      ${dateLabels}
     </svg>`;
   }
 

@@ -10,10 +10,15 @@ import {
   MarketServiceClient,
   type ListMarketQuotesResponse,
   type ListCryptoQuotesResponse,
+  type ListCryptoSectorsResponse,
+  type CryptoSector,
+  type ListDefiTokensResponse,
+  type ListAiTokensResponse,
+  type ListOtherTokensResponse,
   type MarketQuote as ProtoMarketQuote,
   type CryptoQuote as ProtoCryptoQuote,
 } from '@/generated/client/worldmonitor/market/v1/service_client';
-import type { MarketData, CryptoData } from '@/types';
+import type { MarketData, CryptoData, TokenData } from '@/types';
 import { createCircuitBreaker } from '@/utils/circuit-breaker';
 import { getHydratedData } from '@/services/bootstrap';
 
@@ -21,12 +26,20 @@ import { getHydratedData } from '@/services/bootstrap';
 
 const client = new MarketServiceClient(getRpcBaseUrl(), { fetch: (...args: Parameters<typeof fetch>) => globalThis.fetch(...args) });
 const MARKET_QUOTES_CACHE_TTL_MS = 5 * 60 * 1000;
-const stockBreaker = createCircuitBreaker<ListMarketQuotesResponse>({ name: 'Market Quotes', cacheTtlMs: MARKET_QUOTES_CACHE_TTL_MS });
-const commodityBreaker = createCircuitBreaker<ListMarketQuotesResponse>({ name: 'Commodity Quotes', cacheTtlMs: MARKET_QUOTES_CACHE_TTL_MS });
-const cryptoBreaker = createCircuitBreaker<ListCryptoQuotesResponse>({ name: 'Crypto Quotes' });
+const stockBreaker = createCircuitBreaker<ListMarketQuotesResponse>({ name: 'Market Quotes', cacheTtlMs: MARKET_QUOTES_CACHE_TTL_MS, persistCache: true });
+const commodityBreaker = createCircuitBreaker<ListMarketQuotesResponse>({ name: 'Commodity Quotes', cacheTtlMs: MARKET_QUOTES_CACHE_TTL_MS, persistCache: true });
+const cryptoBreaker = createCircuitBreaker<ListCryptoQuotesResponse>({ name: 'Crypto Quotes', persistCache: true });
+const cryptoSectorsBreaker = createCircuitBreaker<ListCryptoSectorsResponse>({ name: 'Crypto Sectors', persistCache: true });
+const defiBreaker = createCircuitBreaker<ListDefiTokensResponse>({ name: 'DeFi Tokens', persistCache: true });
+const aiBreaker = createCircuitBreaker<ListAiTokensResponse>({ name: 'AI Tokens', persistCache: true });
+const otherBreaker = createCircuitBreaker<ListOtherTokensResponse>({ name: 'Other Tokens', persistCache: true });
 
 const emptyStockFallback: ListMarketQuotesResponse = { quotes: [], finnhubSkipped: false, skipReason: '', rateLimited: false };
 const emptyCryptoFallback: ListCryptoQuotesResponse = { quotes: [] };
+const emptyCryptoSectorsFallback: ListCryptoSectorsResponse = { sectors: [] };
+const emptyDefiTokensFallback: ListDefiTokensResponse = { tokens: [] };
+const emptyAiTokensFallback: ListAiTokensResponse = { tokens: [] };
+const emptyOtherTokensFallback: ListOtherTokensResponse = { tokens: [] };
 
 // ---- Proto -> legacy adapters ----
 
@@ -68,12 +81,8 @@ export interface MarketFetchResult {
 
 const lastSuccessfulByKey = new Map<string, MarketData[]>();
 
-function trimSymbol(symbol: string): string {
-  return symbol.trim();
-}
-
 function symbolSetKey(symbols: string[]): string {
-  return [...new Set(symbols.map(trimSymbol))].sort().join(',');
+  return [...new Set(symbols.map((symbol) => symbol.trim()))].sort().join(',');
 }
 
 export async function fetchMultipleStocks(
@@ -83,17 +92,19 @@ export async function fetchMultipleStocks(
   // Preserve exact requested symbols for cache keys and request payloads so
   // case-distinct instruments do not collapse into one cache entry.
   const symbolMetaMap = new Map<string, { symbol: string; name: string; display: string }>();
-  const uppercaseMetaMap = new Map<string, { symbol: string; name: string; display: string } | null>();
+  // Case-insensitive fallback: maps UPPER(symbol) → first requested candidate.
+  // "First wins" is intentional — assumes case-variants are the same instrument
+  // (e.g. btc-usd / BTC-USD both refer to the same asset). When the backend
+  // normalizes casing (e.g. returns "Btc-Usd"), we still recover metadata
+  // rather than silently dropping it as the old null-sentinel approach did.
+  const uppercaseMetaMap = new Map<string, { symbol: string; name: string; display: string }>();
   for (const s of symbols) {
-    const trimmed = trimSymbol(s.symbol);
+    const trimmed = s.symbol.trim();
     if (!symbolMetaMap.has(trimmed)) symbolMetaMap.set(trimmed, s);
 
     const upper = trimmed.toUpperCase();
-    const existingUpper = uppercaseMetaMap.get(upper);
-    if (existingUpper === undefined) {
+    if (!uppercaseMetaMap.has(upper)) {
       uppercaseMetaMap.set(upper, s);
-    } else if (existingUpper !== null && existingUpper.symbol !== s.symbol) {
-      uppercaseMetaMap.set(upper, null);
     }
   }
   const allSymbolStrings = [...symbolMetaMap.keys()];
@@ -108,7 +119,7 @@ export async function fetchMultipleStocks(
   });
 
   const results = resp.quotes.map((q) => {
-    const trimmed = trimSymbol(q.symbol);
+    const trimmed = q.symbol.trim();
     const meta = symbolMetaMap.get(trimmed) ?? uppercaseMetaMap.get(trimmed.toUpperCase()) ?? undefined;
     return toMarketData(q, meta);
   });
@@ -167,4 +178,94 @@ export async function fetchCrypto(): Promise<CryptoData[]> {
   }
 
   return lastSuccessfulCrypto;
+}
+
+// ========================================================================
+// Crypto Sectors
+// ========================================================================
+
+let lastSuccessfulSectors: CryptoSector[] = [];
+
+export async function fetchCryptoSectors(): Promise<CryptoSector[]> {
+  const hydrated = getHydratedData('cryptoSectors') as ListCryptoSectorsResponse | undefined;
+  if (hydrated?.sectors?.length) {
+    lastSuccessfulSectors = hydrated.sectors;
+    return hydrated.sectors;
+  }
+
+  const resp = await cryptoSectorsBreaker.execute(async () => {
+    return client.listCryptoSectors({});
+  }, emptyCryptoSectorsFallback);
+
+  if (resp.sectors.length > 0) {
+    lastSuccessfulSectors = resp.sectors;
+    return resp.sectors;
+  }
+  return lastSuccessfulSectors;
+}
+
+// ========================================================================
+// Token Panels (DeFi, AI, Other)
+// ========================================================================
+
+function toTokenData(q: ProtoCryptoQuote): TokenData {
+  return {
+    name: q.name,
+    symbol: q.symbol,
+    price: q.price,
+    change24h: q.change,
+    change7d: q.change7d ?? 0,
+  };
+}
+
+let lastSuccessfulDefi: TokenData[] = [];
+let lastSuccessfulAi: TokenData[] = [];
+let lastSuccessfulOther: TokenData[] = [];
+
+export async function fetchDefiTokens(): Promise<TokenData[]> {
+  const hydrated = getHydratedData('defiTokens') as ListDefiTokensResponse | undefined;
+  if (hydrated?.tokens?.length) {
+    const mapped = hydrated.tokens.map(toTokenData).filter(t => t.price > 0);
+    if (mapped.length > 0) { lastSuccessfulDefi = mapped; return mapped; }
+  }
+
+  const resp = await defiBreaker.execute(async () => {
+    return client.listDefiTokens({});
+  }, emptyDefiTokensFallback);
+
+  const results = resp.tokens.map(toTokenData).filter(t => t.price > 0);
+  if (results.length > 0) { lastSuccessfulDefi = results; return results; }
+  return lastSuccessfulDefi;
+}
+
+export async function fetchAiTokens(): Promise<TokenData[]> {
+  const hydrated = getHydratedData('aiTokens') as ListAiTokensResponse | undefined;
+  if (hydrated?.tokens?.length) {
+    const mapped = hydrated.tokens.map(toTokenData).filter(t => t.price > 0);
+    if (mapped.length > 0) { lastSuccessfulAi = mapped; return mapped; }
+  }
+
+  const resp = await aiBreaker.execute(async () => {
+    return client.listAiTokens({});
+  }, emptyAiTokensFallback);
+
+  const results = resp.tokens.map(toTokenData).filter(t => t.price > 0);
+  if (results.length > 0) { lastSuccessfulAi = results; return results; }
+  return lastSuccessfulAi;
+}
+
+export async function fetchOtherTokens(): Promise<TokenData[]> {
+  const hydrated = getHydratedData('otherTokens') as ListOtherTokensResponse | undefined;
+  if (hydrated?.tokens?.length) {
+    const mapped = hydrated.tokens.map(toTokenData).filter(t => t.price > 0);
+    if (mapped.length > 0) { lastSuccessfulOther = mapped; return mapped; }
+  }
+
+  const resp = await otherBreaker.execute(async () => {
+    return client.listOtherTokens({});
+  }, emptyOtherTokensFallback);
+
+  const results = resp.tokens.map(toTokenData).filter(t => t.price > 0);
+  if (results.length > 0) { lastSuccessfulOther = results; return results; }
+  return lastSuccessfulOther;
 }
