@@ -157,7 +157,7 @@ async function fetchAirportOpsSummary() {
       totalFlights, closureStatus: isClosed, notamFlags,
       severity: `FLIGHT_DELAY_SEVERITY_${sevStr.toUpperCase()}`,
       topDelayReasons,
-      source: avResult.healthy ? 'aviationstack' : 'simulated',
+      source: avResult.healthy ? 'aviationstack' : 'degraded',
       updatedAt: now,
     });
   }

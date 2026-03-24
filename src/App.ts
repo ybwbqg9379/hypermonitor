@@ -7,6 +7,11 @@ import {
   MOBILE_DEFAULT_MAP_LAYERS,
   STORAGE_KEYS,
   SITE_VARIANT,
+  ALL_PANELS,
+  VARIANT_DEFAULTS,
+  getEffectivePanelConfig,
+  FREE_MAX_PANELS,
+  FREE_MAX_SOURCES,
 } from '@/config';
 import { sanitizeLayersForVariant } from '@/config/map-layer-definitions';
 import type { MapVariant } from '@/config/map-layer-definitions';
@@ -22,18 +27,26 @@ import type { ServiceStatusPanel } from '@/components/ServiceStatusPanel';
 import type { StablecoinPanel } from '@/components/StablecoinPanel';
 import type { ETFFlowsPanel } from '@/components/ETFFlowsPanel';
 import type { MacroSignalsPanel } from '@/components/MacroSignalsPanel';
+import type { FearGreedPanel } from '@/components/FearGreedPanel';
+import type { HormuzPanel } from '@/components/HormuzPanel';
 import type { StrategicPosturePanel } from '@/components/StrategicPosturePanel';
 import type { StrategicRiskPanel } from '@/components/StrategicRiskPanel';
 import type { GulfEconomiesPanel } from '@/components/GulfEconomiesPanel';
+import type { GroceryBasketPanel } from '@/components/GroceryBasketPanel';
+import type { BigMacPanel } from '@/components/BigMacPanel';
+import type { FuelPricesPanel } from '@/components/FuelPricesPanel';
+import type { ConsumerPricesPanel } from '@/components/ConsumerPricesPanel';
 import { isDesktopRuntime, waitForSidecarReady } from '@/services/runtime';
 import { getSecretState } from '@/services/runtime-config';
+import { isProUser } from '@/services/widget-store';
 import { BETA_MODE } from '@/config/beta';
 import { trackEvent, trackDeeplinkOpened } from '@/services/analytics';
 import { preloadCountryGeometry, getCountryNameByCode } from '@/services/country-geometry';
-import { initI18n } from '@/services/i18n';
+import { initI18n, t } from '@/services/i18n';
 
-import { computeDefaultDisabledSources, getLocaleBoostedSources, getTotalFeedCount } from '@/config/feeds';
-import { fetchBootstrapData } from '@/services/bootstrap';
+import { computeDefaultDisabledSources, getLocaleBoostedSources, getTotalFeedCount, FEEDS, INTEL_SOURCES } from '@/config/feeds';
+import { fetchBootstrapData, getBootstrapHydrationState, markBootstrapAsLive, type BootstrapHydrationState } from '@/services/bootstrap';
+import { describeFreshness } from '@/services/persistent-cache';
 import { DesktopUpdater } from '@/app/desktop-updater';
 import { CountryIntelManager } from '@/app/country-intel';
 import { SearchManager } from '@/app/search-manager';
@@ -74,12 +87,17 @@ export class App {
   private unsubAiFlow: (() => void) | null = null;
   private visiblePanelPrimed = new Set<string>();
   private visiblePanelPrimeRaf: number | null = null;
+  private bootstrapHydrationState: BootstrapHydrationState = getBootstrapHydrationState();
+  private cachedModeBannerEl: HTMLElement | null = null;
   private readonly handleViewportPrime = (): void => {
     if (this.visiblePanelPrimeRaf !== null) return;
     this.visiblePanelPrimeRaf = window.requestAnimationFrame(() => {
       this.visiblePanelPrimeRaf = null;
       void this.primeVisiblePanelData();
     });
+  };
+  private readonly handleConnectivityChange = (): void => {
+    this.updateConnectivityUi();
   };
 
   private isPanelNearViewport(panelId: string, marginPx = 400): boolean {
@@ -102,6 +120,94 @@ export class App {
 
   private shouldRefreshCorrelation(): boolean {
     return this.isAnyPanelNearViewport(['military-correlation', 'escalation-correlation', 'economic-correlation', 'disaster-correlation']);
+  }
+
+  private getCachedBootstrapUpdatedAt(): number | null {
+    const cachedTierTimestamps = Object.values(this.bootstrapHydrationState.tiers)
+      .filter((tier) => tier.source === 'cached')
+      .map((tier) => tier.updatedAt)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+    if (cachedTierTimestamps.length === 0) return null;
+    return Math.min(...cachedTierTimestamps);
+  }
+
+  private updateConnectivityUi(): void {
+    const statusIndicator = this.state.container.querySelector('.status-indicator');
+    const statusLabel = statusIndicator?.querySelector('span:last-child');
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine !== false;
+    // Only treat a complete cache fallback (no live data at all) as "cached" for UI purposes.
+    // 'mixed' means live data was partially fetched — showing "Live data unavailable" would be misleading.
+    const usingCachedBootstrap = this.bootstrapHydrationState.source === 'cached';
+    const cachedUpdatedAt = this.getCachedBootstrapUpdatedAt();
+
+    let statusMode: 'live' | 'cached' | 'unavailable' = 'live';
+    let bannerMessage: string | null = null;
+
+    if (!online) {
+      // Offline: show banner regardless of mixed/cached (any cached data is better than nothing)
+      const hasAnyCached = this.bootstrapHydrationState.source === 'cached' || this.bootstrapHydrationState.source === 'mixed';
+      if (hasAnyCached) {
+        statusMode = 'cached';
+        const offlineCachedAt = this.bootstrapHydrationState.tiers
+          ? Math.min(...Object.values(this.bootstrapHydrationState.tiers)
+              .filter((tier) => tier.source === 'cached' || tier.source === 'mixed')
+              .map((tier) => tier.updatedAt)
+              .filter((v): v is number => typeof v === 'number' && Number.isFinite(v)))
+          : NaN;
+        const freshness = Number.isFinite(offlineCachedAt) ? describeFreshness(offlineCachedAt) : t('common.cached').toLowerCase();
+        bannerMessage = t('connectivity.offlineCached', { freshness });
+      } else {
+        statusMode = 'unavailable';
+        bannerMessage = t('connectivity.offlineUnavailable');
+      }
+    } else if (usingCachedBootstrap) {
+      statusMode = 'cached';
+      const freshness = cachedUpdatedAt ? describeFreshness(cachedUpdatedAt) : t('common.cached').toLowerCase();
+      bannerMessage = t('connectivity.cachedFallback', { freshness });
+    }
+
+    if (statusIndicator && statusLabel) {
+      statusIndicator.classList.toggle('status-indicator--cached', statusMode === 'cached');
+      statusIndicator.classList.toggle('status-indicator--unavailable', statusMode === 'unavailable');
+      statusLabel.textContent = statusMode === 'live'
+        ? t('header.live')
+        : statusMode === 'cached'
+          ? t('header.cached')
+          : t('header.unavailable');
+    }
+
+    if (bannerMessage) {
+      if (!this.cachedModeBannerEl) {
+        this.cachedModeBannerEl = document.createElement('div');
+        this.cachedModeBannerEl.className = 'cached-mode-banner';
+        this.cachedModeBannerEl.setAttribute('role', 'status');
+        this.cachedModeBannerEl.setAttribute('aria-live', 'polite');
+
+        const badge = document.createElement('span');
+        badge.className = 'cached-mode-banner__badge';
+        const text = document.createElement('span');
+        text.className = 'cached-mode-banner__text';
+        this.cachedModeBannerEl.append(badge, text);
+
+        const header = this.state.container.querySelector('.header');
+        if (header?.parentElement) {
+          header.insertAdjacentElement('afterend', this.cachedModeBannerEl);
+        } else {
+          this.state.container.prepend(this.cachedModeBannerEl);
+        }
+      }
+
+      this.cachedModeBannerEl.classList.toggle('cached-mode-banner--unavailable', statusMode === 'unavailable');
+      const badge = this.cachedModeBannerEl.querySelector('.cached-mode-banner__badge')!;
+      const text = this.cachedModeBannerEl.querySelector('.cached-mode-banner__text')!;
+      badge.textContent = statusMode === 'cached' ? t('header.cached') : t('header.unavailable');
+      text.textContent = bannerMessage;
+      return;
+    }
+
+    this.cachedModeBannerEl?.remove();
+    this.cachedModeBannerEl = null;
   }
 
   private async primeVisiblePanelData(forceAll = false): Promise<void> {
@@ -131,6 +237,14 @@ export class App {
       const panel = this.state.panels['macro-signals'] as MacroSignalsPanel | undefined;
       if (panel) primeTask('macro-signals', () => panel.fetchData());
     }
+    if (shouldPrime('fear-greed')) {
+      const panel = this.state.panels['fear-greed'] as FearGreedPanel | undefined;
+      if (panel) primeTask('fear-greed', () => panel.fetchData());
+    }
+    if (shouldPrime('hormuz-tracker')) {
+      const panel = this.state.panels['hormuz-tracker'] as HormuzPanel | undefined;
+      if (panel) primeTask('hormuz-tracker', () => panel.fetchData());
+    }
     if (shouldPrime('etf-flows')) {
       const panel = this.state.panels['etf-flows'] as ETFFlowsPanel | undefined;
       if (panel) primeTask('etf-flows', () => panel.fetchData());
@@ -145,6 +259,22 @@ export class App {
     if (shouldPrime('gulf-economies')) {
       const panel = this.state.panels['gulf-economies'] as GulfEconomiesPanel | undefined;
       if (panel) primeTask('gulf-economies', () => panel.fetchData());
+    }
+    if (shouldPrime('grocery-basket')) {
+      const panel = this.state.panels['grocery-basket'] as GroceryBasketPanel | undefined;
+      if (panel) primeTask('grocery-basket', () => panel.fetchData());
+    }
+    if (shouldPrime('bigmac')) {
+      const panel = this.state.panels['bigmac'] as BigMacPanel | undefined;
+      if (panel) primeTask('bigmac', () => panel.fetchData());
+    }
+    if (shouldPrime('fuel-prices')) {
+      const panel = this.state.panels['fuel-prices'] as FuelPricesPanel | undefined;
+      if (panel) primeTask('fuel-prices', () => panel.fetchData());
+    }
+    if (shouldPrime('consumer-prices')) {
+      const panel = this.state.panels['consumer-prices'] as ConsumerPricesPanel | undefined;
+      if (panel) primeTask('consumer-prices', () => panel.fetchData());
     }
     if (shouldPrimeAny(['markets', 'heatmap', 'commodities', 'crypto', 'energy-complex'])) {
       primeTask('markets', () => this.dataLoader.loadMarkets());
@@ -166,7 +296,8 @@ export class App {
     if (shouldPrime('supply-chain')) {
       primeTask('supplyChain', () => this.dataLoader.loadSupplyChain());
     }
-    if (SITE_VARIANT === 'finance' && getSecretState('WORLDMONITOR_API_KEY').present) {
+    const _wmAccess = getSecretState('WORLDMONITOR_API_KEY').present || isProUser();
+    if (_wmAccess) {
       if (shouldPrime('stock-analysis')) {
         primeTask('stockAnalysis', () => this.dataLoader.loadStockAnalysis());
       }
@@ -175,6 +306,9 @@ export class App {
       }
       if (shouldPrime('daily-market-brief')) {
         primeTask('dailyMarketBrief', () => this.dataLoader.loadDailyMarketBrief());
+      }
+      if (shouldPrime('market-implications')) {
+        primeTask('marketImplications', () => this.dataLoader.loadMarketImplications());
       }
     }
 
@@ -200,22 +334,33 @@ export class App {
     let mapLayers: MapLayers;
     let panelSettings: Record<string, PanelConfig>;
 
+    // Panels that must survive variant switches: desktop config, user-created widgets, MCP panels.
+    const isDynamicPanel = (k: string) => k === 'runtime-config' || k.startsWith('cw-') || k.startsWith('mcp-');
+
     // Check if variant changed - reset all settings to variant defaults
     const storedVariant = localStorage.getItem('worldmonitor-variant');
     const currentVariant = SITE_VARIANT;
     console.log(`[App] Variant check: stored="${storedVariant}", current="${currentVariant}"`);
     if (storedVariant !== currentVariant) {
-      // Variant changed - use defaults for new variant, clear old settings
-      console.log('[App] Variant changed - resetting to defaults');
+      // Variant changed — seed new variant's panels, disable panels not in the new variant
+      console.log('[App] Variant changed - seeding new defaults, disabling cross-variant panels');
       localStorage.setItem('worldmonitor-variant', currentVariant);
+      // Reset map layers for the new variant (map layers are not user-personalized the same way)
       localStorage.removeItem(STORAGE_KEYS.mapLayers);
-      localStorage.removeItem(STORAGE_KEYS.panels);
-      localStorage.removeItem(PANEL_ORDER_KEY);
-      localStorage.removeItem(PANEL_ORDER_KEY + '-bottom');
-      localStorage.removeItem(PANEL_ORDER_KEY + '-bottom-set');
-      localStorage.removeItem(PANEL_SPANS_KEY);
       mapLayers = sanitizeLayersForVariant({ ...defaultLayers }, currentVariant as MapVariant);
-      panelSettings = { ...DEFAULT_PANELS };
+      // Load existing panel prefs (if any), disable panels not belonging to the new variant
+      panelSettings = loadFromStorage<Record<string, PanelConfig>>(STORAGE_KEYS.panels, {});
+      const newVariantKeys = new Set(VARIANT_DEFAULTS[currentVariant] ?? []);
+      for (const key of Object.keys(panelSettings)) {
+        if (!newVariantKeys.has(key) && !isDynamicPanel(key) && panelSettings[key]) {
+          panelSettings[key] = { ...panelSettings[key]!, enabled: false };
+        }
+      }
+      for (const key of newVariantKeys) {
+        if (!(key in panelSettings)) {
+          panelSettings[key] = { ...getEffectivePanelConfig(key, currentVariant), enabled: true };
+        }
+      }
     } else {
       mapLayers = sanitizeLayersForVariant(
         loadFromStorage<MapLayers>(STORAGE_KEYS.mapLayers, defaultLayers),
@@ -248,12 +393,43 @@ export class App {
         localStorage.setItem(PANEL_KEY_RENAMES_MIGRATION_KEY, 'done');
       }
 
-      // Merge in any new panels that didn't exist when settings were saved
-      for (const [key, config] of Object.entries(DEFAULT_PANELS)) {
+      // Merge in any panels from ALL_PANELS that didn't exist when settings were saved
+      for (const key of Object.keys(ALL_PANELS)) {
         if (!(key in panelSettings)) {
-          panelSettings[key] = { ...config };
+          const isDefault = (VARIANT_DEFAULTS[SITE_VARIANT] ?? []).includes(key);
+          panelSettings[key] = { ...getEffectivePanelConfig(key, SITE_VARIANT), enabled: isDefault };
         }
       }
+
+      // One-time migration: expose all panels to existing users (previously variant-gated)
+      const UNIFIED_MIGRATION_KEY = 'worldmonitor-unified-panels-v1';
+      if (!localStorage.getItem(UNIFIED_MIGRATION_KEY)) {
+        const variantDefaults = new Set(VARIANT_DEFAULTS[SITE_VARIANT] ?? []);
+        for (const key of Object.keys(ALL_PANELS)) {
+          if (!(key in panelSettings)) {
+            panelSettings[key] = { ...getEffectivePanelConfig(key, SITE_VARIANT), enabled: variantDefaults.has(key) };
+          }
+        }
+        saveToStorage(STORAGE_KEYS.panels, panelSettings);
+        localStorage.setItem(UNIFIED_MIGRATION_KEY, 'done');
+      }
+
+      // One-time migration: fix happy variant sessions that got cross-variant panels enabled
+      // (regression from #1911 unified panel registry which failed to disable non-variant panels on variant switch)
+      const HAPPY_PANEL_FIX_KEY = 'worldmonitor-happy-panel-fix-v1';
+      if (SITE_VARIANT === 'happy' && !localStorage.getItem(HAPPY_PANEL_FIX_KEY)) {
+        const happyKeys = new Set(VARIANT_DEFAULTS['happy'] ?? []);
+        let fixed = false;
+        for (const key of Object.keys(panelSettings)) {
+          if (!happyKeys.has(key) && !isDynamicPanel(key) && panelSettings[key]?.enabled) {
+            panelSettings[key] = { ...panelSettings[key]!, enabled: false };
+            fixed = true;
+          }
+        }
+        if (fixed) saveToStorage(STORAGE_KEYS.panels, panelSettings);
+        localStorage.setItem(HAPPY_PANEL_FIX_KEY, 'done');
+      }
+
       console.log('[App] Loaded panel settings from storage:', Object.entries(panelSettings).filter(([_, v]) => !v.enabled).map(([k]) => k));
 
       // One-time migration: reorder panels for existing users (v1.9 panel layout)
@@ -305,7 +481,7 @@ export class App {
     // One-time migration: prune removed panel keys from stored settings and order
     const PANEL_PRUNE_KEY = 'worldmonitor-panel-prune-v1';
     if (!localStorage.getItem(PANEL_PRUNE_KEY)) {
-      const validKeys = new Set(Object.keys(DEFAULT_PANELS));
+      const validKeys = new Set(Object.keys(ALL_PANELS));
       let pruned = false;
       for (const key of Object.keys(panelSettings)) {
         if (!validKeys.has(key) && key !== 'runtime-config') {
@@ -344,14 +520,40 @@ export class App {
 
     // Desktop key management panel must always remain accessible in Tauri.
     if (isDesktopApp) {
-      if (!panelSettings['runtime-config']) {
+      if (!panelSettings['runtime-config'] || !panelSettings['runtime-config'].enabled) {
         panelSettings['runtime-config'] = {
-          name: 'Desktop Configuration',
+          ...panelSettings['runtime-config'],
+          name: panelSettings['runtime-config']?.name ?? 'Desktop Configuration',
           enabled: true,
-          priority: 2,
+          priority: panelSettings['runtime-config']?.priority ?? 2,
         };
         saveToStorage(STORAGE_KEYS.panels, panelSettings);
       }
+    }
+
+    // Enforce free-tier panel limit on every launch (handles legacy/downgraded users).
+    if (!isProUser()) {
+      // cw-* (custom widget) panels are not loaded for free users — disable them so they
+      // don't silently consume quota slots that count against visible standard panels.
+      let cwDisabled = false;
+      for (const key of Object.keys(panelSettings)) {
+        if (key.startsWith('cw-') && panelSettings[key]?.enabled) {
+          panelSettings[key] = { ...panelSettings[key]!, enabled: false };
+          cwDisabled = true;
+        }
+      }
+      const enabledKeys = Object.entries(panelSettings)
+        .filter(([k, v]) => v.enabled && !k.startsWith('cw-'))
+        .sort(([ka, a], [kb, b]) => (a.priority ?? 99) - (b.priority ?? 99) || ka.localeCompare(kb))
+        .map(([k]) => k);
+      const needsTrim = enabledKeys.length > FREE_MAX_PANELS;
+      if (needsTrim) {
+        for (const key of enabledKeys.slice(FREE_MAX_PANELS)) {
+          panelSettings[key] = { ...panelSettings[key]!, enabled: false };
+        }
+        console.log(`[App] Free tier: trimmed ${enabledKeys.length - FREE_MAX_PANELS} panel(s) to enforce ${FREE_MAX_PANELS}-panel limit`);
+      }
+      if (cwDisabled || needsTrim) saveToStorage(STORAGE_KEYS.panels, panelSettings);
     }
 
     const initialUrlState: ParsedMapUrlState | null = parseMapUrlState(window.location.search, mapLayers);
@@ -388,6 +590,26 @@ export class App {
     }
 
     const disabledSources = new Set(loadFromStorage<string[]>(STORAGE_KEYS.disabledFeeds, []));
+
+    // Enforce free-tier source limit on every launch (handles legacy/downgraded users).
+    if (!isProUser()) {
+      const allSourceNames = (() => {
+        const s = new Set<string>();
+        Object.values(FEEDS).forEach(feeds => feeds?.forEach(f => s.add(f.name)));
+        INTEL_SOURCES.forEach(f => s.add(f.name));
+        return Array.from(s).sort((a, b) => a.localeCompare(b));
+      })();
+      const currentlyEnabled = allSourceNames.filter(n => !disabledSources.has(n));
+      const enabledCount = currentlyEnabled.length;
+      if (enabledCount > FREE_MAX_SOURCES) {
+        const toDisable = enabledCount - FREE_MAX_SOURCES;
+        for (const name of currentlyEnabled.slice(FREE_MAX_SOURCES)) {
+          disabledSources.add(name);
+        }
+        saveToStorage(STORAGE_KEYS.disabledFeeds, Array.from(disabledSources));
+        console.log(`[App] Free tier: disabled ${toDisable} source(s) to enforce ${FREE_MAX_SOURCES}-source limit`);
+      }
+    }
 
     // Build shared state object
     this.state = {
@@ -480,6 +702,8 @@ export class App {
       ensureCorrectZones: () => this.panelLayout.ensureCorrectZones(),
       refreshOpenCountryBrief: () => this.countryIntel.refreshOpenBrief(),
       stopLayerActivity: (layer) => this.dataLoader.stopLayerActivity(layer),
+      mountLiveNewsIfReady: () => this.panelLayout.mountLiveNewsIfReady(),
+      updateFlightSource: (adsb, military) => this.searchManager.updateFlightSource(adsb, military),
     });
 
     // Wire cross-module callback: DataLoader → SearchManager
@@ -551,6 +775,7 @@ export class App {
 
     // Hydrate in-memory cache from bootstrap endpoint (before panels construct and fetch)
     await fetchBootstrapData();
+    this.bootstrapHydrationState = getBootstrapHydrationState();
 
     const geoCoordsPromise: Promise<PreciseCoordinates | null> =
       this.state.isMobile && this.state.initialUrlState?.lat === undefined && this.state.initialUrlState?.lon === undefined
@@ -563,6 +788,9 @@ export class App {
     // Phase 1: Layout (creates map + panels — they'll find hydrated data)
     this.panelLayout.init();
     showProBanner(this.state.container);
+    this.updateConnectivityUi();
+    window.addEventListener('online', this.handleConnectivityChange);
+    window.addEventListener('offline', this.handleConnectivityChange);
 
     const mobileGeoCoords = await geoCoordsPromise;
     if (mobileGeoCoords && this.state.map) {
@@ -652,6 +880,11 @@ export class App {
       this.primeVisiblePanelData(true),
     ]);
 
+    // If bootstrap was served from cache but live data just loaded, promote the status indicator
+    markBootstrapAsLive();
+    this.bootstrapHydrationState = getBootstrapHydrationState();
+    this.updateConnectivityUi();
+
     // Initial correlation engine run
     if (this.state.correlationEngine) {
       void this.state.correlationEngine.run(this.state).then(() => {
@@ -695,6 +928,8 @@ export class App {
     this.state.isDestroyed = true;
     window.removeEventListener('scroll', this.handleViewportPrime);
     window.removeEventListener('resize', this.handleViewportPrime);
+    window.removeEventListener('online', this.handleConnectivityChange);
+    window.removeEventListener('offline', this.handleConnectivityChange);
     if (this.visiblePanelPrimeRaf !== null) {
       window.cancelAnimationFrame(this.visiblePanelPrimeRaf);
       this.visiblePanelPrimeRaf = null;
@@ -709,6 +944,8 @@ export class App {
     this.unsubAiFlow?.();
     this.state.breakingBanner?.destroy();
     destroyBreakingNewsAlerts();
+    this.cachedModeBannerEl?.remove();
+    this.cachedModeBannerEl = null;
     this.state.map?.destroy();
     disconnectAisStream();
   }
@@ -803,19 +1040,25 @@ export class App {
         'stock-analysis',
         () => this.dataLoader.loadStockAnalysis(),
         REFRESH_INTERVALS.stockAnalysis,
-        () => getSecretState('WORLDMONITOR_API_KEY').present && this.isPanelNearViewport('stock-analysis'),
+        () => (getSecretState('WORLDMONITOR_API_KEY').present || isProUser()) && this.isPanelNearViewport('stock-analysis'),
       );
       this.refreshScheduler.scheduleRefresh(
         'daily-market-brief',
         () => this.dataLoader.loadDailyMarketBrief(),
         REFRESH_INTERVALS.dailyMarketBrief,
-        () => getSecretState('WORLDMONITOR_API_KEY').present && this.isPanelNearViewport('daily-market-brief'),
+        () => (getSecretState('WORLDMONITOR_API_KEY').present || isProUser()) && this.isPanelNearViewport('daily-market-brief'),
       );
       this.refreshScheduler.scheduleRefresh(
         'stock-backtest',
         () => this.dataLoader.loadStockBacktest(),
         REFRESH_INTERVALS.stockBacktest,
-        () => getSecretState('WORLDMONITOR_API_KEY').present && this.isPanelNearViewport('stock-backtest'),
+        () => (getSecretState('WORLDMONITOR_API_KEY').present || isProUser()) && this.isPanelNearViewport('stock-backtest'),
+      );
+      this.refreshScheduler.scheduleRefresh(
+        'market-implications',
+        () => this.dataLoader.loadMarketImplications(),
+        REFRESH_INTERVALS.marketImplications,
+        () => (getSecretState('WORLDMONITOR_API_KEY').present || isProUser()) && this.isPanelNearViewport('market-implications'),
       );
     }
 
@@ -843,6 +1086,18 @@ export class App {
       () => (this.state.panels['macro-signals'] as MacroSignalsPanel).fetchData(),
       REFRESH_INTERVALS.macroSignals,
       () => this.isPanelNearViewport('macro-signals')
+    );
+    this.refreshScheduler.scheduleRefresh(
+      'fear-greed',
+      () => (this.state.panels['fear-greed'] as FearGreedPanel).fetchData(),
+      REFRESH_INTERVALS.fearGreed,
+      () => this.isPanelNearViewport('fear-greed')
+    );
+    this.refreshScheduler.scheduleRefresh(
+      'hormuz-tracker',
+      () => (this.state.panels['hormuz-tracker'] as HormuzPanel).fetchData(),
+      REFRESH_INTERVALS.hormuzTracker,
+      () => this.isPanelNearViewport('hormuz-tracker')
     );
     this.refreshScheduler.scheduleRefresh(
       'strategic-posture',
@@ -881,6 +1136,27 @@ export class App {
       () => (this.state.panels['gulf-economies'] as GulfEconomiesPanel).fetchData(),
       REFRESH_INTERVALS.gulfEconomies,
       () => this.isPanelNearViewport('gulf-economies')
+    );
+
+    this.refreshScheduler.scheduleRefresh(
+      'grocery-basket',
+      () => (this.state.panels['grocery-basket'] as GroceryBasketPanel).fetchData(),
+      REFRESH_INTERVALS.groceryBasket,
+      () => this.isPanelNearViewport('grocery-basket')
+    );
+
+    this.refreshScheduler.scheduleRefresh(
+      'bigmac',
+      () => (this.state.panels['bigmac'] as BigMacPanel).fetchData(),
+      REFRESH_INTERVALS.groceryBasket,
+      () => this.isPanelNearViewport('bigmac')
+    );
+
+    this.refreshScheduler.scheduleRefresh(
+      'fuel-prices',
+      () => (this.state.panels['fuel-prices'] as FuelPricesPanel).fetchData(),
+      REFRESH_INTERVALS.fuelPrices,
+      () => this.isPanelNearViewport('fuel-prices')
     );
 
     // Refresh intelligence signals for CII (geopolitical variant only)

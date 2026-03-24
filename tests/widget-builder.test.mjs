@@ -465,8 +465,8 @@ describe('panel guardrails — cw- prefix handling', () => {
 
   it('panel-layout loads widgets when feature is enabled', () => {
     assert.ok(
-      layout.includes('isWidgetFeatureEnabled'),
-      'panel-layout must check isWidgetFeatureEnabled before loading widgets',
+      layout.includes('isProUser'),
+      'panel-layout must check isProUser before loading widgets',
     );
     assert.ok(
       layout.includes('loadWidgets'),
@@ -481,12 +481,10 @@ describe('panel guardrails — cw- prefix handling', () => {
     );
   });
 
-  it('panel-layout AI button is gated by isWidgetFeatureEnabled', () => {
-    // The AI button creation should be inside an isWidgetFeatureEnabled block
-    const featureIdx = layout.indexOf('isWidgetFeatureEnabled');
+  it('panel-layout AI button is gated by isProUser', () => {
+    const featureIdx = layout.indexOf('isProUser');
     const buttonIdx = layout.indexOf('ai-widget-block');
-    // Button CSS class or AI text should appear after the feature check
-    assert.ok(featureIdx !== -1, 'isWidgetFeatureEnabled not found in panel-layout');
+    assert.ok(featureIdx !== -1, 'isProUser not found in panel-layout');
     assert.ok(buttonIdx !== -1, 'AI widget button not found in panel-layout');
   });
 
@@ -1207,10 +1205,10 @@ describe('PRO widget — modal and layout integration', () => {
     );
   });
 
-  it('layout has PRO create button when isProWidgetEnabled', () => {
+  it('layout has PRO create button when isProUser', () => {
     assert.ok(
-      layout.includes('isProWidgetEnabled'),
-      'panel-layout must import/call isProWidgetEnabled',
+      layout.includes('isProUser'),
+      'panel-layout must import/call isProUser',
     );
     assert.ok(
       layout.includes('ai-widget-block-pro'),

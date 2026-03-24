@@ -12,27 +12,9 @@ import { sha256Hex } from '../../../_shared/hash';
 import { CHROME_UA } from '../../../_shared/constants';
 import { VARIANT_FEEDS, INTEL_SOURCES, type ServerFeed } from './_feeds';
 import { classifyByKeyword, type ThreatLevel } from './_classifier';
+import { getRelayBaseUrl, getRelayHeaders } from '../../../_shared/relay';
 
-function getRelayBaseUrl(): string | null {
-  const relayUrl = process.env.WS_RELAY_URL;
-  if (!relayUrl) return null;
-  return relayUrl
-    .replace(/^ws(s?):\/\//, 'http$1://')
-    .replace(/\/$/, '');
-}
-
-function getRelayHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    'User-Agent': CHROME_UA,
-    Accept: 'application/rss+xml, application/xml, text/xml, */*',
-  };
-  const relaySecret = process.env.RELAY_SHARED_SECRET;
-  if (relaySecret) {
-    const relayHeader = (process.env.RELAY_AUTH_HEADER || 'x-relay-key').toLowerCase();
-    headers[relayHeader] = relaySecret;
-  }
-  return headers;
-}
+const RSS_ACCEPT = 'application/rss+xml, application/xml, text/xml, */*';
 
 const VALID_VARIANTS = new Set(['full', 'tech', 'finance', 'happy', 'commodity']);
 const fallbackDigestCache = new Map<string, { data: ListFeedDigestResponse; ts: number }>();
@@ -122,7 +104,7 @@ async function fetchAndParseRss(
           const { controller, cleanup } = createTimeoutLinkedController(signal);
           try {
             const resp = await fetch(relayUrl, {
-              headers: getRelayHeaders(),
+              headers: getRelayHeaders({ Accept: RSS_ACCEPT }),
               signal: controller.signal,
             });
             if (resp.ok) text = await resp.text();

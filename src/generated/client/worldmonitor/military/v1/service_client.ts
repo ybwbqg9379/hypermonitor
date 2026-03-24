@@ -255,6 +255,22 @@ export interface WingbitsLiveFlight {
   operator: string;
   onGround: boolean;
   lastSeen: string;
+  depIata: string;
+  arrIata: string;
+  depTimeUtc: string;
+  arrTimeUtc: string;
+  depEstimatedUtc: string;
+  arrEstimatedUtc: string;
+  depDelayedMin: number;
+  arrDelayedMin: number;
+  flightStatus: string;
+  flightDurationMin: number;
+  arrTerminal: string;
+  photoUrl: string;
+  photoLink: string;
+  photoCredit: string;
+  callsignIata: string;
+  airlineName: string;
 }
 
 export type MilitaryActivityType = "MILITARY_ACTIVITY_TYPE_UNSPECIFIED" | "MILITARY_ACTIVITY_TYPE_EXERCISE" | "MILITARY_ACTIVITY_TYPE_PATROL" | "MILITARY_ACTIVITY_TYPE_TRANSPORT" | "MILITARY_ACTIVITY_TYPE_DEPLOYMENT" | "MILITARY_ACTIVITY_TYPE_TRANSIT" | "MILITARY_ACTIVITY_TYPE_UNKNOWN";

@@ -220,7 +220,6 @@ export default [
   "www.coindesk.com",
   "cointelegraph.com",
   "travel.state.gov",
-  "www.safetravel.govt.nz",
   "th.usembassy.gov",
   "ae.usembassy.gov",
   "de.usembassy.gov",

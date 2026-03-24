@@ -65,6 +65,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/market/v1/list-commodity-quotes': 'medium',
   '/api/market/v1/list-stablecoin-markets': 'medium',
   '/api/market/v1/get-sector-summary': 'medium',
+  '/api/market/v1/get-fear-greed-index': 'slow',
   '/api/market/v1/list-gulf-quotes': 'medium',
   '/api/market/v1/analyze-stock': 'slow',
   '/api/market/v1/get-stock-analysis-history': 'medium',
@@ -73,6 +74,8 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/infrastructure/v1/list-service-statuses': 'slow',
   '/api/seismology/v1/list-earthquakes': 'slow',
   '/api/infrastructure/v1/list-internet-outages': 'slow',
+  '/api/infrastructure/v1/list-internet-ddos-attacks': 'slow',
+  '/api/infrastructure/v1/list-internet-traffic-anomalies': 'slow',
 
   '/api/unrest/v1/list-unrest-events': 'slow',
   '/api/cyber/v1/list-cyber-threats': 'slow',
@@ -94,13 +97,17 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/maritime/v1/list-navigational-warnings': 'static',
   '/api/supply-chain/v1/get-shipping-rates': 'static',
   '/api/economic/v1/get-fred-series': 'static',
+  '/api/economic/v1/get-bls-series': 'daily',
   '/api/economic/v1/get-energy-prices': 'static',
   '/api/research/v1/list-arxiv-papers': 'static',
   '/api/research/v1/list-trending-repos': 'static',
   '/api/giving/v1/get-giving-summary': 'static',
   '/api/intelligence/v1/get-country-intel-brief': 'static',
+  '/api/intelligence/v1/get-gdelt-topic-timeline': 'medium',
+  '/api/intelligence/v1/list-market-implications': 'static',
   '/api/climate/v1/list-climate-anomalies': 'static',
   '/api/sanctions/v1/list-sanctions-pressure': 'static',
+  '/api/sanctions/v1/lookup-sanction-entity': 'no-store',
   '/api/radiation/v1/list-radiation-observations': 'slow',
   '/api/thermal/v1/list-thermal-escalations': 'slow',
   '/api/research/v1/list-tech-events': 'static',
@@ -118,8 +125,12 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/trade/v1/get-trade-barriers': 'static',
   '/api/trade/v1/get-trade-restrictions': 'static',
   '/api/trade/v1/get-customs-revenue': 'static',
+  '/api/trade/v1/list-comtrade-flows': 'static',
   '/api/economic/v1/list-world-bank-indicators': 'static',
   '/api/economic/v1/get-energy-capacity': 'static',
+  '/api/economic/v1/list-grocery-basket-prices': 'static',
+  '/api/economic/v1/list-bigmac-prices': 'static',
+  '/api/economic/v1/list-fuel-prices': 'static',
   '/api/supply-chain/v1/get-critical-minerals': 'daily',
   '/api/military/v1/get-aircraft-details': 'static',
   '/api/military/v1/get-wingbits-status': 'static',
@@ -130,34 +141,56 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/research/v1/list-hackernews-items': 'slow',
   '/api/intelligence/v1/get-risk-scores': 'slow',
   '/api/intelligence/v1/get-pizzint-status': 'slow',
+  '/api/intelligence/v1/classify-event': 'static',
   '/api/intelligence/v1/search-gdelt-documents': 'slow',
   '/api/infrastructure/v1/get-cable-health': 'slow',
   '/api/positive-events/v1/list-positive-geo-events': 'slow',
 
   '/api/military/v1/list-military-bases': 'static',
   '/api/economic/v1/get-macro-signals': 'medium',
+  '/api/economic/v1/get-national-debt': 'daily',
   '/api/prediction/v1/list-prediction-markets': 'medium',
   '/api/forecast/v1/get-forecasts': 'medium',
+  '/api/forecast/v1/get-simulation-package': 'slow',
   '/api/supply-chain/v1/get-chokepoint-status': 'medium',
   '/api/news/v1/list-feed-digest': 'slow',
-  '/api/intelligence/v1/classify-event': 'static',
   '/api/intelligence/v1/get-country-facts': 'daily',
   '/api/intelligence/v1/list-security-advisories': 'slow',
+  '/api/intelligence/v1/list-satellites': 'slow',
+  '/api/intelligence/v1/list-gps-interference': 'slow',
+  '/api/intelligence/v1/list-oref-alerts': 'fast',
+  '/api/intelligence/v1/list-telegram-feed': 'fast',
+  '/api/intelligence/v1/get-company-enrichment': 'slow',
+  '/api/intelligence/v1/list-company-signals': 'slow',
   '/api/news/v1/summarize-article-cache': 'slow',
 
   '/api/imagery/v1/search-imagery': 'static',
 
   '/api/infrastructure/v1/list-temporal-anomalies': 'medium',
+  '/api/infrastructure/v1/get-ip-geo': 'no-store',
+  '/api/infrastructure/v1/reverse-geocode': 'slow',
+  '/api/infrastructure/v1/get-bootstrap-data': 'no-store',
   '/api/webcam/v1/get-webcam-image': 'no-store',
   '/api/webcam/v1/list-webcams': 'no-store',
+
+  '/api/consumer-prices/v1/get-consumer-price-overview': 'slow',
+  '/api/consumer-prices/v1/get-consumer-price-basket-series': 'slow',
+  '/api/consumer-prices/v1/list-consumer-price-categories': 'slow',
+  '/api/consumer-prices/v1/list-consumer-price-movers': 'slow',
+  '/api/consumer-prices/v1/list-retailer-price-spreads': 'slow',
+  '/api/consumer-prices/v1/get-consumer-price-freshness': 'slow',
+
+  '/api/aviation/v1/get-youtube-live-stream-info': 'fast',
 };
 
-const PREMIUM_RPC_PATHS = new Set([
-  '/api/market/v1/analyze-stock',
-  '/api/market/v1/get-stock-analysis-history',
-  '/api/market/v1/backtest-stock',
-  '/api/market/v1/list-stored-stock-backtests',
-]);
+// TODO(payment-pr): PREMIUM_RPC_PATHS is intentionally empty until the payment/pro-user
+// system is implemented. The original set of stock analysis paths used forceKey=true,
+// which broke web pro users because isTrustedBrowserOrigin() is header-only (Origin can be
+// spoofed) and the web client has no mechanism to forward a server-validated entitlement.
+// When the payment PR lands, re-populate this set and have the web client send a
+// server-validated pro token (e.g. X-WorldMonitor-Key) so the entitlement check is
+// meaningful. Until then, access is gated client-side by isProUser() + WORLDMONITOR_API_KEY.
+const PREMIUM_RPC_PATHS = new Set<string>();
 
 /**
  * Creates a Vercel Edge handler for a single domain's routes.

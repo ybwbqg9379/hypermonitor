@@ -384,6 +384,7 @@
 .disp-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .disp-table th {
@@ -415,11 +416,13 @@
 }
 
 .disp-name {
-  white-space: nowrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .disp-status {
   width: 70px;
+  min-width: 70px;
 }
 
 .disp-badge {
@@ -446,6 +449,8 @@
 }
 
 .disp-count {
+  width: 52px;
+  min-width: 52px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
@@ -1542,6 +1547,8 @@
   flex-shrink: 0;
   width: 12px;
   text-align: center;
+  padding: 10px 8px;
+  margin: -10px -4px;
 }
 
 .wc-drag-handle:hover {
@@ -1550,6 +1557,10 @@
 
 .wc-row.wc-dragging {
   opacity: 0.4;
+}
+
+.wc-content-dragging .wc-row {
+  user-select: none;
 }
 
 .wc-row.wc-drag-over-above {
@@ -2386,3 +2397,20 @@
   color: var(--text-faint);
   text-align: right;
 }
+
+/* Grocery Basket Panel */
+.gb-wrapper { overflow: hidden; }
+.gb-scroll { overflow-x: auto; }
+.gb-table { border-collapse: collapse; width: 100%; font-size: 0.75rem; }
+.gb-table th, .gb-table td { padding: 4px 6px; border: 1px solid rgba(255,255,255,0.08); text-align: right; white-space: nowrap; }
+.gb-item-col, .gb-item-name { text-align: left; min-width: 100px; }
+.gb-country-header { text-align: center; font-weight: 600; min-width: 80px; }
+.gb-country-name { font-size: 0.65rem; opacity: 0.7; }
+.gb-cell { position: relative; }
+.gb-local { display: block; font-size: 0.6rem; opacity: 0.6; }
+.gb-unit { display: block; font-size: 0.6rem; opacity: 0.5; }
+.gb-na { opacity: 0.3; text-align: center; }
+.gb-cheapest { background: rgba(34,197,94,0.15); color: #4ade80; }
+.gb-priciest { background: rgba(239,68,68,0.1); color: #f87171; }
+.gb-total-row td { border-top: 2px solid rgba(255,255,255,0.2); }
+.gb-updated { font-size: 0.65rem; opacity: 0.4; text-align: right; padding: 4px 6px; }

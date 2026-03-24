@@ -9,7 +9,9 @@
 import { getRpcBaseUrl } from '@/services/rpc-client';
 import {
   InfrastructureServiceClient,
+  type ListInternetDdosAttacksResponse,
   type ListInternetOutagesResponse,
+  type ListInternetTrafficAnomaliesResponse,
   type ListServiceStatusesResponse,
   type InternetOutage as ProtoOutage,
   type ServiceStatus as ProtoServiceStatus,
@@ -24,9 +26,13 @@ import { getHydratedData } from '@/services/bootstrap';
 const client = new InfrastructureServiceClient(getRpcBaseUrl(), { fetch: (...args) => globalThis.fetch(...args) });
 const outageBreaker = createCircuitBreaker<ListInternetOutagesResponse>({ name: 'Internet Outages', cacheTtlMs: 30 * 60 * 1000, persistCache: true });
 const statusBreaker = createCircuitBreaker<ListServiceStatusesResponse>({ name: 'Service Statuses', cacheTtlMs: 30 * 60 * 1000, persistCache: true });
+const ddosBreaker = createCircuitBreaker<ListInternetDdosAttacksResponse>({ name: 'DDoS Attacks', cacheTtlMs: 30 * 60 * 1000, persistCache: true });
+const trafficAnomaliesBreaker = createCircuitBreaker<ListInternetTrafficAnomaliesResponse>({ name: 'Traffic Anomalies', cacheTtlMs: 30 * 60 * 1000, persistCache: true });
 
 const emptyOutageFallback: ListInternetOutagesResponse = { outages: [], pagination: undefined };
 const emptyStatusFallback: ListServiceStatusesResponse = { statuses: [] };
+const emptyDdosFallback: ListInternetDdosAttacksResponse = { protocol: [], vector: [], dateRangeStart: '', dateRangeEnd: '', topTargetLocations: [] };
+const emptyAnomaliesFallback: ListInternetTrafficAnomaliesResponse = { anomalies: [], totalCount: 0 };
 
 // ---- Proto enum -> legacy string adapters ----
 
@@ -104,6 +110,32 @@ export async function fetchInternetOutages(): Promise<InternetOutage[]> {
 
 export function getOutagesStatus(): string {
   return outageBreaker.getStatus();
+}
+
+// ========================================================================
+// DDoS Attacks -- L3/L4 attack summaries from Cloudflare Radar
+// ========================================================================
+
+export async function fetchDdosAttacks(): Promise<ListInternetDdosAttacksResponse> {
+  const hydrated = getHydratedData('ddosAttacks') as ListInternetDdosAttacksResponse | undefined;
+  if (hydrated?.protocol?.length || hydrated?.vector?.length) return hydrated;
+
+  return ddosBreaker.execute(async () => {
+    return client.listInternetDdosAttacks({});
+  }, emptyDdosFallback);
+}
+
+// ========================================================================
+// Traffic Anomalies -- anomalous traffic patterns from Cloudflare Radar
+// ========================================================================
+
+export async function fetchTrafficAnomalies(country?: string): Promise<ListInternetTrafficAnomaliesResponse> {
+  const hydrated = getHydratedData('trafficAnomalies') as ListInternetTrafficAnomaliesResponse | undefined;
+  if (hydrated?.anomalies !== undefined && !country) return hydrated;
+
+  return trafficAnomaliesBreaker.execute(async () => {
+    return client.listInternetTrafficAnomalies({ country: country || '' });
+  }, emptyAnomaliesFallback);
 }
 
 // ========================================================================

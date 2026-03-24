@@ -41,6 +41,7 @@ describe('panel-config guardrails', () => {
       /this\.ctx\.panels\[key\]\s*=/,             // createPanel helper
       /this\.ctx\.panels\['deduction'\]/,          // desktop-only, intentionally ungated
       /this\.ctx\.panels\['runtime-config'\]/,     // desktop-only, intentionally ungated
+      /this\.ctx\.panels\['live-news'\]/,          // mountLiveNewsIfReady — has its own channel guard
       /panel as unknown as/,                       // lazyPanel generic cast
       /this\.ctx\.panels\[panelKey\]\s*=/,         // FEEDS loop (guarded by DEFAULT_PANELS check)
       /this\.ctx\.panels\[spec\.id\]\s*=/,         // custom widgets (cw- prefix, always enabled)

@@ -150,6 +150,199 @@ export interface DeductSituationResponse {
   provider: string;
 }
 
+export interface ListSatellitesRequest {
+  country: string;
+}
+
+export interface ListSatellitesResponse {
+  satellites: Satellite[];
+}
+
+export interface Satellite {
+  id: string;
+  name: string;
+  country: string;
+  type: string;
+  alt: number;
+  velocity: number;
+  inclination: number;
+  line1: string;
+  line2: string;
+}
+
+export interface ListGpsInterferenceRequest {
+  region: string;
+}
+
+export interface ListGpsInterferenceResponse {
+  hexes: GpsJamHex[];
+  stats?: GpsJamStats;
+  source: string;
+  fetchedAt: number;
+}
+
+export interface GpsJamHex {
+  h3: string;
+  lat: number;
+  lon: number;
+  level: InterferenceLevel;
+  npAvg: number;
+  sampleCount: number;
+  aircraftCount: number;
+}
+
+export interface GpsJamStats {
+  totalHexes: number;
+  highCount: number;
+  mediumCount: number;
+}
+
+export interface ListOrefAlertsRequest {
+  mode: Mode;
+}
+
+export interface ListOrefAlertsResponse {
+  configured: boolean;
+  alerts: OrefAlert[];
+  history: OrefWave[];
+  historyCount24h: number;
+  totalHistoryCount: number;
+  timestampMs: number;
+  error: string;
+}
+
+export interface OrefAlert {
+  id: string;
+  cat: string;
+  title: string;
+  data: string[];
+  desc: string;
+  timestampMs: number;
+}
+
+export interface OrefWave {
+  alerts: OrefAlert[];
+  timestampMs: number;
+}
+
+export interface ListTelegramFeedRequest {
+  limit: number;
+  topic: string;
+  channel: string;
+}
+
+export interface ListTelegramFeedResponse {
+  enabled: boolean;
+  messages: TelegramMessage[];
+  count: number;
+  error: string;
+}
+
+export interface TelegramMessage {
+  id: string;
+  channelId: string;
+  channelName: string;
+  text: string;
+  timestampMs: number;
+  mediaUrls: string[];
+  sourceUrl: string;
+  topic: string;
+}
+
+export interface GetCompanyEnrichmentRequest {
+  domain: string;
+  name: string;
+}
+
+export interface GetCompanyEnrichmentResponse {
+  company?: EnrichedCompany;
+  github?: EnrichedGithub;
+  techStack: TechStackItem[];
+  secFilings?: SecFilings;
+  hackerNewsMentions: HNMention[];
+  enrichedAtMs: number;
+  sources: string[];
+}
+
+export interface EnrichedCompany {
+  name: string;
+  domain: string;
+  description: string;
+  location: string;
+  website: string;
+  founded: number;
+}
+
+export interface EnrichedGithub {
+  publicRepos: number;
+  followers: number;
+  avatarUrl: string;
+}
+
+export interface TechStackItem {
+  name: string;
+  category: string;
+  confidence: number;
+}
+
+export interface SecFilings {
+  totalFilings: number;
+  recentFilings: SecFiling[];
+}
+
+export interface SecFiling {
+  form: string;
+  fileDate: string;
+  description: string;
+}
+
+export interface HNMention {
+  title: string;
+  url: string;
+  points: number;
+  comments: number;
+  createdAtMs: number;
+}
+
+export interface ListCompanySignalsRequest {
+  company: string;
+  domain: string;
+}
+
+export interface ListCompanySignalsResponse {
+  company: string;
+  domain: string;
+  signals: CompanySignal[];
+  summary?: SignalSummary;
+  discoveredAtMs: number;
+}
+
+export interface CompanySignal {
+  type: string;
+  title: string;
+  url: string;
+  source: string;
+  sourceTier: number;
+  timestampMs: number;
+  strength: string;
+  engagement?: SignalEngagement;
+}
+
+export interface SignalEngagement {
+  points: number;
+  comments: number;
+  stars: number;
+  forks: number;
+  mentions: number;
+}
+
+export interface SignalSummary {
+  totalSignals: number;
+  byType: Record<string, number>;
+  strongestSignal?: CompanySignal;
+  signalDiversity: number;
+}
+
 export interface GetCountryFactsRequest {
   countryCode: string;
 }
@@ -185,11 +378,54 @@ export interface SecurityAdvisoryItem {
   country: string;
 }
 
+export interface GetGdeltTopicTimelineRequest {
+  topic: string;
+}
+
+export interface GetGdeltTopicTimelineResponse {
+  topic: string;
+  tone: GdeltTimelinePoint[];
+  vol: GdeltTimelinePoint[];
+  fetchedAt: string;
+  error: string;
+}
+
+export interface GdeltTimelinePoint {
+  date: string;
+  value: number;
+}
+
+export interface ListMarketImplicationsRequest {
+}
+
+export interface ListMarketImplicationsResponse {
+  cards: MarketImplicationCard[];
+  degraded: boolean;
+  emptyReason: string;
+  generatedAt: string;
+}
+
+export interface MarketImplicationCard {
+  ticker: string;
+  name: string;
+  direction: string;
+  timeframe: string;
+  confidence: string;
+  title: string;
+  narrative: string;
+  riskCaveat: string;
+  driver: string;
+}
+
 export type SeverityLevel = "SEVERITY_LEVEL_UNSPECIFIED" | "SEVERITY_LEVEL_LOW" | "SEVERITY_LEVEL_MEDIUM" | "SEVERITY_LEVEL_HIGH";
 
 export type TrendDirection = "TREND_DIRECTION_UNSPECIFIED" | "TREND_DIRECTION_RISING" | "TREND_DIRECTION_STABLE" | "TREND_DIRECTION_FALLING";
 
 export type DataFreshness = "DATA_FRESHNESS_UNSPECIFIED" | "DATA_FRESHNESS_FRESH" | "DATA_FRESHNESS_STALE";
+
+export type InterferenceLevel = "INTERFERENCE_LEVEL_UNSPECIFIED" | "INTERFERENCE_LEVEL_LOW" | "INTERFERENCE_LEVEL_MEDIUM" | "INTERFERENCE_LEVEL_HIGH";
+
+export type Mode = "MODE_UNSPECIFIED" | "MODE_HISTORY";
 
 export interface FieldViolation {
   field: string;
@@ -395,6 +631,160 @@ export class IntelligenceServiceClient {
     return await resp.json() as DeductSituationResponse;
   }
 
+  async listSatellites(req: ListSatellitesRequest, options?: IntelligenceServiceCallOptions): Promise<ListSatellitesResponse> {
+    let path = "/api/intelligence/v1/list-satellites";
+    const params = new URLSearchParams();
+    if (req.country != null && req.country !== "") params.set("country", String(req.country));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListSatellitesResponse;
+  }
+
+  async listGpsInterference(req: ListGpsInterferenceRequest, options?: IntelligenceServiceCallOptions): Promise<ListGpsInterferenceResponse> {
+    let path = "/api/intelligence/v1/list-gps-interference";
+    const params = new URLSearchParams();
+    if (req.region != null && req.region !== "") params.set("region", String(req.region));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListGpsInterferenceResponse;
+  }
+
+  async listOrefAlerts(req: ListOrefAlertsRequest, options?: IntelligenceServiceCallOptions): Promise<ListOrefAlertsResponse> {
+    let path = "/api/intelligence/v1/list-oref-alerts";
+    const params = new URLSearchParams();
+    if (req.mode != null && req.mode !== "") params.set("mode", String(req.mode));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListOrefAlertsResponse;
+  }
+
+  async listTelegramFeed(req: ListTelegramFeedRequest, options?: IntelligenceServiceCallOptions): Promise<ListTelegramFeedResponse> {
+    let path = "/api/intelligence/v1/list-telegram-feed";
+    const params = new URLSearchParams();
+    if (req.limit != null && req.limit !== 0) params.set("limit", String(req.limit));
+    if (req.topic != null && req.topic !== "") params.set("topic", String(req.topic));
+    if (req.channel != null && req.channel !== "") params.set("channel", String(req.channel));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListTelegramFeedResponse;
+  }
+
+  async getCompanyEnrichment(req: GetCompanyEnrichmentRequest, options?: IntelligenceServiceCallOptions): Promise<GetCompanyEnrichmentResponse> {
+    let path = "/api/intelligence/v1/get-company-enrichment";
+    const params = new URLSearchParams();
+    if (req.domain != null && req.domain !== "") params.set("domain", String(req.domain));
+    if (req.name != null && req.name !== "") params.set("name", String(req.name));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetCompanyEnrichmentResponse;
+  }
+
+  async listCompanySignals(req: ListCompanySignalsRequest, options?: IntelligenceServiceCallOptions): Promise<ListCompanySignalsResponse> {
+    let path = "/api/intelligence/v1/list-company-signals";
+    const params = new URLSearchParams();
+    if (req.company != null && req.company !== "") params.set("company", String(req.company));
+    if (req.domain != null && req.domain !== "") params.set("domain", String(req.domain));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListCompanySignalsResponse;
+  }
+
   async getCountryFacts(req: GetCountryFactsRequest, options?: IntelligenceServiceCallOptions): Promise<GetCountryFactsResponse> {
     let path = "/api/intelligence/v1/get-country-facts";
     const params = new URLSearchParams();
@@ -441,6 +831,54 @@ export class IntelligenceServiceClient {
     }
 
     return await resp.json() as ListSecurityAdvisoriesResponse;
+  }
+
+  async getGdeltTopicTimeline(req: GetGdeltTopicTimelineRequest, options?: IntelligenceServiceCallOptions): Promise<GetGdeltTopicTimelineResponse> {
+    let path = "/api/intelligence/v1/get-gdelt-topic-timeline";
+    const params = new URLSearchParams();
+    if (req.topic != null && req.topic !== "") params.set("topic", String(req.topic));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetGdeltTopicTimelineResponse;
+  }
+
+  async listMarketImplications(req: ListMarketImplicationsRequest, options?: IntelligenceServiceCallOptions): Promise<ListMarketImplicationsResponse> {
+    let path = "/api/intelligence/v1/list-market-implications";
+    const url = this.baseURL + path;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as ListMarketImplicationsResponse;
   }
 
   private async handleError(resp: Response): Promise<never> {

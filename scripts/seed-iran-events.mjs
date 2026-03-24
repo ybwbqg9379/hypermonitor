@@ -149,6 +149,12 @@ const LOCATION_COORDS = {
   'qom':           { lat: 34.6401, lon: 50.8764 },
   'andisheh':      { lat: 35.7050, lon: 51.0000 },
   'ankara':        { lat: 39.9334, lon: 32.8597 },
+  'minab':         { lat: 27.1452, lon: 57.0812 },
+  'asaluyeh':      { lat: 27.4834, lon: 52.6121 },
+  'south pars':    { lat: 27.5000, lon: 52.5000 },
+  'al-ahmadi':     { lat: 29.0769, lon: 48.0839 },
+  'mina al-ahmadi': { lat: 29.0769, lon: 48.0839 },
+  'mina abdullah': { lat: 28.9600, lon: 48.1600 },
 };
 
 const CATEGORY_MAP = {

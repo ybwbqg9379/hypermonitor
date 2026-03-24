@@ -98,24 +98,29 @@ async function fetchClimateAnomalies() {
   const endDate = new Date().toISOString().slice(0, 10);
   const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-  const results = await Promise.allSettled(
-    ZONES.map((zone) => fetchZone(zone, startDate, endDate)),
-  );
-
   const anomalies = [];
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      if (r.value != null) anomalies.push(r.value);
-    } else {
-      console.log(`  [CLIMATE] ${r.reason?.message ?? r.reason}`);
+  let failures = 0;
+  for (const zone of ZONES) {
+    try {
+      const result = await fetchZone(zone, startDate, endDate);
+      if (result != null) anomalies.push(result);
+    } catch (err) {
+      console.log(`  [CLIMATE] ${err?.message ?? err}`);
+      failures++;
     }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+
+  const MIN_ZONES = Math.ceil(ZONES.length * 2 / 3);
+  if (anomalies.length < MIN_ZONES) {
+    throw new Error(`Only ${anomalies.length}/${ZONES.length} zones returned data (${failures} errors) — skipping write to preserve previous Redis data`);
   }
 
   return { anomalies, pagination: undefined };
 }
 
 function validate(data) {
-  return Array.isArray(data?.anomalies);
+  return Array.isArray(data?.anomalies) && data.anomalies.length >= Math.ceil(ZONES.length * 2 / 3);
 }
 
 runSeed('climate', 'anomalies', CANONICAL_KEY, fetchClimateAnomalies, {

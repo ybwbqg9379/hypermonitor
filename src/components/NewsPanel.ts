@@ -8,6 +8,7 @@ import { analysisWorker, enrichWithVelocityML, getClusterAssetContext, MAX_DISTA
 import { getSourcePropagandaRisk, getSourceTier, getSourceType } from '@/config/feeds';
 import { SITE_VARIANT } from '@/config';
 import { t, getCurrentLanguage } from '@/services/i18n';
+import { track } from '@/services/analytics';
 
 type SortMode = 'relevance' | 'newest';
 
@@ -52,8 +53,8 @@ export class NewsPanel extends Panel {
   private lastHeadlineSignature = '';
   private isSummarizing = false;
 
-  constructor(id: string, title: string) {
-    super({ id, title, showCount: true, trackActivity: true });
+  constructor(id: string, title: string, infoTooltip?: string) {
+    super({ id, title, showCount: true, trackActivity: true, infoTooltip });
     this.sortMode = this.loadSortMode();
     this.createDeviationIndicator();
     this.createSortToggle();
@@ -144,6 +145,7 @@ export class NewsPanel extends Panel {
     this.updateSortButtonLabel();
     this.sortBtn.addEventListener('click', () => {
       this.sortMode = this.sortMode === 'relevance' ? 'newest' : 'relevance';
+      track('news-sort-toggle', { mode: this.sortMode });
       this.saveSortMode();
       this.updateSortButtonLabel();
       // Re-render with cached data
@@ -197,7 +199,10 @@ export class NewsPanel extends Panel {
     this.summaryBtn.className = 'panel-summarize-btn';
     this.summaryBtn.innerHTML = '✨';
     this.summaryBtn.title = t('components.newsPanel.summarize');
-    this.summaryBtn.addEventListener('click', () => this.handleSummarize());
+    this.summaryBtn.addEventListener('click', () => {
+      track('news-summarize', { panelId: this.panelId });
+      this.handleSummarize();
+    });
 
     // Insert before count element (use inherited this.header directly)
     const countEl = this.header.querySelector('.panel-count');
@@ -727,6 +732,58 @@ export class NewsPanel extends Panel {
       nuclear: 'modals.countryBrief.infra.nuclear',
     };
     return t(keyMap[type]);
+  }
+
+  /**
+   * Returns true if this panel contains a news item with the given link
+   * (either as a cluster primary or secondary article).
+   */
+  public hasNewsItem(link: string): boolean {
+    if (this.lastRawClusters) {
+      return this.lastRawClusters.some(
+        c => c.primaryLink === link || c.allItems.some(i => i.link === link)
+      );
+    }
+    if (this.lastRawItems) {
+      return this.lastRawItems.some(i => i.link === link);
+    }
+    return false;
+  }
+
+  /**
+   * Scroll the panel to the item with the given link and flash-highlight it.
+   * For virtual-scrolled panels, renders the containing chunk first.
+   */
+  public scrollToNewsItem(link: string): void {
+    // In clustered mode, scroll via windowedList so off-screen chunks are rendered first
+    if (this.lastRawClusters && this.windowedList) {
+      const found = this.windowedList.scrollToItem(
+        (p: { cluster: ClusteredEvent }) =>
+          p.cluster.primaryLink === link || p.cluster.allItems.some((i: { link: string }) => i.link === link)
+      );
+      if (found) {
+        setTimeout(() => {
+          const el = this.content.querySelector(`[data-news-id="${CSS.escape(link)}"]`)
+            ?? this.content.querySelector(`a[href="${CSS.escape(link)}"]`);
+          if (el) this.flashHighlight(el);
+        }, 350);
+        return;
+      }
+    }
+    // Flat mode or small lists rendered directly in DOM
+    const el = this.content.querySelector(`[data-news-id="${CSS.escape(link)}"]`)
+      ?? this.content.querySelector(`a[href="${CSS.escape(link)}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      this.flashHighlight(el);
+    }
+  }
+
+  private flashHighlight(el: Element): void {
+    el.classList.remove('search-highlight');
+    void (el as HTMLElement).offsetWidth;
+    el.classList.add('search-highlight');
+    setTimeout(() => el.classList.remove('search-highlight'), 3100);
   }
 
   /**

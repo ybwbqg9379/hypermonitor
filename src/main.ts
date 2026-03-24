@@ -124,7 +124,7 @@ Sentry.init({
     /(?:AbortError: )?The user aborted a request/,
     /\w+ is not a function.*\/uv\/service\//,
     /__isInQueue__/,
-    /^(?:LIDNotify(?:Id)?|onWebViewAppeared|onGetWiFiBSSID) is not defined$/,
+    /^(?:LIDNotify(?:Id)?|onWebViewAppeared|onGetWiFiBSSID|onHide|onShow|onReady|tapAt|removeHighlight) is not defined$/,
     /signal timed out/,
     /Se requiere plan premium/,
     /hybridExecute is not defined/,
@@ -178,6 +178,7 @@ Sentry.init({
     /out of memory/,
     /Could not connect to the server/,
     /shaderSource must be an instance of WebGLShader/,
+    /WebGL2RenderingContext\.shaderSource: Argument 1 is not an object/,
     /Failed to initialize WebGL/,
     /opacityVertexArray\.length/,
     /Length of new data is \d+, which doesn't match current length of/,
@@ -195,7 +196,7 @@ Sentry.init({
     /Can't find variable: caches/,
     /crypto\.randomUUID is not a function/,
     /ucapi is not defined/,
-    /Identifier '(?:script|reportPage|element)' has already been declared/,
+    /Identifier '(?:script|reportPage|element|Shop)' has already been declared/,
     /getAttribute is not a function.*getAttribute\("role"\)/,
     /^TypeError: Internal error$/,
     /SCDynimacBridge/,
@@ -245,6 +246,13 @@ Sentry.init({
     /args\.site\.enabledFeatures/,
     /can't access property "\w+", FONTS\[/,
     /^\w{1,2} is not a function\. \(In '\w{1,2}\(/,
+    /null is not an object \(evaluating '\w+\.magnitude\.toFixed'\)/,
+    /start offset of Int16Array should be a multiple of 2/,
+    /Cannot read properties of undefined \(reading 'then'\)/,
+    /^(?:Error: )?uncaught exception: undefined$/,
+    /Can't find variable: ss_bootstrap_config/,
+    /undefined is not an object \(evaluating '[a-z]\.includes'\)/,
+    /^"use strict" is not a function$/,
   ],
   beforeSend(event) {
     const msg = event.exception?.values?.[0]?.value ?? '';
@@ -290,6 +298,8 @@ Sentry.init({
     if (frames.length > 0 && frames.every(f => /^blob:/.test(f.filename ?? ''))) return null;
     // Suppress errors originating from UV proxy (Ultraviolet service worker)
     if (frames.some(f => /\/uv\/service\//.test(f.filename ?? '') || /uv\.handler/.test(f.filename ?? ''))) return null;
+    // Suppress Greasemonkey/Tampermonkey userscript errors (x-plugin-script)
+    if (frames.length > 0 && frames.every(f => !f.filename || /\/x-plugin-script\//.test(f.filename))) return null;
     // Suppress YouTube IFrame widget API internal errors
     if (frames.some(f => /www-widgetapi\.js/.test(f.filename ?? ''))) return null;
     // Suppress Sentry beacon XHR transport errors (readyState on aborted XHR — not our code)
@@ -326,6 +336,7 @@ import { initEmbedBridge } from '@/services/embed-bridge';
 import { applyFont } from '@/services/font-settings';
 import { SITE_VARIANT } from '@/config/variant';
 import { clearChunkReloadGuard, installChunkReloadGuard } from '@/bootstrap/chunk-reload';
+import { installSwUpdateHandler } from '@/bootstrap/sw-update';
 
 // Auto-reload on stale chunk 404s after deployment (Vite fires this for modulepreload failures).
 const chunkReloadStorageKey = installChunkReloadGuard(__APP_VERSION__);
@@ -430,20 +441,7 @@ if ('__TAURI_INTERNALS__' in window || '__TAURI__' in window) {
 }
 
 if (!('__TAURI_INTERNALS__' in window) && !('__TAURI__' in window) && 'serviceWorker' in navigator) {
-  // Auto-reload when a NEW SW replaces an existing one (fixes stale HTML after deploys).
-  // Skip on first visit: skipWaiting+clientsClaim fires controllerchange when the SW
-  // claims the page for the first time, causing a useless full reload on every new session.
-  let hadController = !!navigator.serviceWorker.controller;
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController) {
-      hadController = true;
-      return;
-    }
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
+  installSwUpdateHandler({ version: __APP_VERSION__ });
 
   const SW_UPDATE_SUCCESS_INTERVAL_MS = 60 * 60 * 1000;
   const SW_UPDATE_FAILURE_INTERVAL_MS = 5 * 60 * 1000;

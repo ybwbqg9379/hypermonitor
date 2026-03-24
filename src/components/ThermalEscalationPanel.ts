@@ -6,9 +6,6 @@ import { escapeHtml } from '@/utils/sanitize';
 const STATUS_CLASS: Record<string, string> = {
   spike: 'spike', persistent: 'persistent', elevated: 'elevated', normal: 'normal',
 };
-const CONFIDENCE_CLASS: Record<string, string> = {
-  high: 'high', medium: 'medium', low: 'low',
-};
 
 export class ThermalEscalationPanel extends Panel {
   private clusters: ThermalEscalationCluster[] = [];
@@ -77,32 +74,25 @@ export class ThermalEscalationPanel extends Panel {
 
   private renderSummary(): string {
     const { clusterCount, elevatedCount, spikeCount, persistentCount, conflictAdjacentCount, highRelevanceCount } = this.summary;
+    // Only show non-zero sub-stats to reduce visual noise
+    const stats = [
+      { val: elevatedCount, label: 'Elevated', cls: 'te-stat-elevated' },
+      { val: spikeCount, label: 'Spikes', cls: 'te-stat-spike' },
+      { val: persistentCount, label: 'Persist', cls: 'te-stat-persistent' },
+      { val: conflictAdjacentCount, label: 'Conflict', cls: 'te-stat-conflict' },
+      { val: highRelevanceCount, label: 'Strategic', cls: 'te-stat-strategic' },
+    ].filter(s => s.val > 0);
     return `
       <div class="te-summary">
         <div class="te-stat">
           <span class="te-stat-val">${clusterCount}</span>
           <span class="te-stat-label">Total</span>
         </div>
-        <div class="te-stat te-stat-elevated">
-          <span class="te-stat-val">${elevatedCount}</span>
-          <span class="te-stat-label">Elevated</span>
-        </div>
-        <div class="te-stat te-stat-spike">
-          <span class="te-stat-val">${spikeCount}</span>
-          <span class="te-stat-label">Spikes</span>
-        </div>
-        <div class="te-stat te-stat-persistent">
-          <span class="te-stat-val">${persistentCount}</span>
-          <span class="te-stat-label">Persist</span>
-        </div>
-        <div class="te-stat te-stat-conflict">
-          <span class="te-stat-val">${conflictAdjacentCount}</span>
-          <span class="te-stat-label">Conflict</span>
-        </div>
-        <div class="te-stat te-stat-strategic">
-          <span class="te-stat-val">${highRelevanceCount}</span>
-          <span class="te-stat-label">Strategic</span>
-        </div>
+        ${stats.map(s => `
+        <div class="te-stat ${s.cls}">
+          <span class="te-stat-val">${s.val}</span>
+          <span class="te-stat-label">${s.label}</span>
+        </div>`).join('')}
       </div>
     `;
   }
@@ -110,7 +100,6 @@ export class ThermalEscalationPanel extends Panel {
   private renderCard(c: ThermalEscalationCluster): string {
     // P1: use allowlisted class names, never raw API strings in attributes
     const statusClass = STATUS_CLASS[c.status] ?? 'normal';
-    const confClass = CONFIDENCE_CLASS[c.confidence] ?? 'low';
 
     const persistence = c.persistenceHours >= 24
       ? `${Math.round(c.persistenceHours / 24)}d`
@@ -119,22 +108,17 @@ export class ThermalEscalationPanel extends Panel {
     const deltaSign = c.countDelta > 0 ? '+' : '';
     const deltaClass = c.countDelta > 0 ? 'pos' : c.countDelta < 0 ? 'neg' : '';
 
-    // P2: confidence badge reinstated
+    // Status badge + at most one context badge (conflict > energy > industrial) + strategic if high
+    const contextBadge =
+      c.context === 'conflict_adjacent' ? '<span class="te-badge te-badge-conflict">conflict-adj</span>' :
+      c.context === 'energy_adjacent' ? '<span class="te-badge te-badge-energy">energy-adj</span>' :
+      c.context === 'industrial' ? '<span class="te-badge te-badge-industrial">industrial</span>' : '';
     const badges = [
       `<span class="te-badge te-badge-${statusClass}">${escapeHtml(c.status)}</span>`,
-      `<span class="te-badge te-badge-conf-${confClass}">${escapeHtml(c.confidence)}</span>`,
+      contextBadge,
       c.strategicRelevance === 'high' ? '<span class="te-badge te-badge-strategic">strategic</span>' : '',
-      c.context === 'conflict_adjacent' ? '<span class="te-badge te-badge-conflict">conflict-adj</span>' : '',
-      c.context === 'energy_adjacent' ? '<span class="te-badge te-badge-energy">energy-adj</span>' : '',
-      c.context === 'industrial' ? '<span class="te-badge te-badge-industrial">industrial</span>' : '',
     ].filter(Boolean).join('');
 
-    // P2: nearbyAssets reinstated (up to 3)
-    const assets = c.nearbyAssets.length > 0
-      ? `<div class="te-assets">${c.nearbyAssets.slice(0, 3).map(a => escapeHtml(a)).join(' · ')}</div>`
-      : '';
-
-    // P2: lastDetectedAt reinstated
     const age = formatAge(c.lastDetectedAt);
 
     return `
@@ -142,9 +126,8 @@ export class ThermalEscalationPanel extends Panel {
         <div class="te-card-accent"></div>
         <div class="te-card-body">
           <div class="te-region">${escapeHtml(c.regionLabel)}</div>
-          <div class="te-meta">${escapeHtml(c.countryName)} · ${c.observationCount} obs · ${c.uniqueSourceCount} src</div>
+          <div class="te-meta">${c.observationCount} obs · ${c.uniqueSourceCount} src</div>
           <div class="te-badges">${badges}</div>
-          ${assets}
         </div>
         <div class="te-metrics">
           <div class="te-frp">${escapeHtml(frpDisplay)} <span class="te-frp-unit">MW</span></div>

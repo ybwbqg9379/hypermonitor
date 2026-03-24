@@ -80,6 +80,7 @@ describe('Legacy api/*.js endpoint allowlist', () => {
     'seed-health.js',
     'story.js',
     'telegram-feed.js',
+    'sanctions-entity-search.js',
     'version.js',
   ]);
 
@@ -106,6 +107,30 @@ describe('Legacy api/*.js endpoint allowlist', () => {
         `${file} is in ALLOWED_LEGACY_ENDPOINTS but does not exist in api/ — remove it from the allowlist.`,
       );
     }
+  });
+});
+
+describe('reverse-geocode Redis write', () => {
+  const geocodePath = join(apiDir, 'reverse-geocode.js');
+
+  it('uses ctx.waitUntil for Redis write (non-blocking, survives isolate teardown)', () => {
+    const src = readFileSync(geocodePath, 'utf-8');
+    assert.ok(
+      src.includes('ctx.waitUntil('),
+      'reverse-geocode.js: Redis cache write must use ctx.waitUntil() so the response is not blocked by the write',
+    );
+    assert.ok(
+      !src.includes('await fetch(redisUrl'),
+      'reverse-geocode.js: Redis write must not be awaited before returning the response',
+    );
+  });
+
+  it('bounds the Redis write with AbortSignal.timeout', () => {
+    const src = readFileSync(geocodePath, 'utf-8');
+    assert.ok(
+      src.includes('AbortSignal.timeout'),
+      'reverse-geocode.js: Redis write must have AbortSignal.timeout to bound slow writes',
+    );
   });
 });
 

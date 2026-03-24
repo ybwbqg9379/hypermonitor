@@ -10,6 +10,7 @@ export type { CountryBriefSignals } from '@/types';
 
 export interface IntelligenceCache {
   flightDelays?: AirportDelayAlert[];
+  thermalEscalation?: import('@/services/thermal-escalation').ThermalEscalationWatch;
   aircraftPositions?: PositionSample[];
   outages?: InternetOutage[];
   protests?: { events: SocialUnrestEvent[]; sources: { acled: number; gdelt: number } };
