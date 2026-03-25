@@ -1,4 +1,12 @@
 /**
+ * Shared Redis pointer keys for simulation artifacts.
+ * Defined here so TypeScript handlers and seed scripts agree on the exact string.
+ * The MJS seed script keeps its own copy (cannot import TS source directly).
+ */
+export const SIMULATION_OUTCOME_LATEST_KEY = 'forecast:simulation-outcome:latest';
+export const SIMULATION_PACKAGE_LATEST_KEY = 'forecast:simulation-package:latest';
+
+/**
  * Static cache keys for the bootstrap endpoint.
  * Only keys with NO request-varying suffixes are included.
  */
@@ -22,6 +30,7 @@ export const BOOTSTRAP_CACHE_KEYS: Record<string, string> = {
   climateAnomalies: 'climate:anomalies:v1',
   radiationWatch:  'radiation:observations:v1',
   thermalEscalation: 'thermal:escalation:v1',
+  crossSourceSignals: 'intelligence:cross-source-signals:v1',
   wildfires:        'wildfire:fires:v1',
   marketQuotes:     'market:stocks-bootstrap:v1',
   commodityQuotes:  'market:commodities-bootstrap:v1',
@@ -69,7 +78,7 @@ export const BOOTSTRAP_TIERS: Record<string, 'slow' | 'fast'> = {
   minerals: 'slow', giving: 'slow', sectors: 'slow',
   progressData: 'slow', renewableEnergy: 'slow',
   etfFlows: 'slow', shippingRates: 'fast', wildfires: 'slow',
-  climateAnomalies: 'slow', sanctionsPressure: 'slow', radiationWatch: 'slow', thermalEscalation: 'slow', cyberThreats: 'slow', techReadiness: 'slow',
+  climateAnomalies: 'slow', sanctionsPressure: 'slow', radiationWatch: 'slow', thermalEscalation: 'slow', crossSourceSignals: 'slow', cyberThreats: 'slow', techReadiness: 'slow',
   theaterPosture: 'fast', naturalEvents: 'slow',
   cryptoQuotes: 'slow', gulfQuotes: 'slow', stablecoinMarkets: 'slow',
   unrestEvents: 'slow', ucdpEvents: 'slow', techEvents: 'slow',

@@ -10,6 +10,7 @@
 // Redis key: supply_chain:hormuz_tracker:v1
 // Cron: every 24 hours (0 6 * * *)
 // TTL: 108000s (30h — daily + 6h buffer)
+// Chart window: last 30 days
 
 import { loadEnvFile, CHROME_UA, runSeed } from './_seed-utils.mjs';
 
@@ -84,7 +85,7 @@ async function fetchPbiCharts() {
   if (!modelId) throw new Error('Could not find Power BI modelId');
   console.log(`  Model ID: ${modelId}, containers: ${allContainers.length}`);
 
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
   const charts = [];
 
@@ -169,7 +170,7 @@ async function fetchPbiCharts() {
       .filter(Boolean)
       .sort((a, b) => a.date.localeCompare(b.date));
 
-    console.log(`  ${cfg.label}: ${series.length} points (last 24h)`);
+    console.log(`  ${cfg.label}: ${series.length} points (last 30d)`);
     charts.push({ label: cfg.label, title: cfg.title, series });
   }
 
@@ -295,5 +296,5 @@ async function buildPayload() {
 
 await runSeed('supply_chain', 'hormuz_tracker', CANONICAL_KEY, buildPayload, {
   ttlSeconds: CACHE_TTL,
-  validateFn: (d) => !!(d?.updatedDate || d?.summary || d?.title),
+  validateFn: (d) => !!(d?.updatedDate || d?.summary || d?.title) && d?.charts?.some(c => (c.series?.length ?? 0) > 0),
 });

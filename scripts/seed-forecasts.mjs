@@ -32,6 +32,18 @@ const FORECAST_DEEP_MAX_CANDIDATES = 3;
 const FORECAST_DEEP_RUN_PREFIX = 'seed-data/forecast-traces';
 const SIMULATION_PACKAGE_SCHEMA_VERSION = 'v1';
 const SIMULATION_PACKAGE_LATEST_KEY = 'forecast:simulation-package:latest';
+const SIMULATION_OUTCOME_LATEST_KEY = 'forecast:simulation-outcome:latest';
+const SIMULATION_OUTCOME_SCHEMA_VERSION = 'v1';
+const SIMULATION_RUNNER_VERSION = 'v1';
+const SIMULATION_TASK_KEY_PREFIX = 'forecast:simulation-task:v1';
+const SIMULATION_TASK_QUEUE_KEY = 'forecast:simulation-task-queue:v1';
+const SIMULATION_LOCK_KEY_PREFIX = 'forecast:simulation-lock:v1';
+const VALID_RUN_ID_RE = /^\d{13,}-[a-z0-9-]{1,64}$/i;
+const SIMULATION_ROUND1_MAX_TOKENS = 2200;
+const SIMULATION_ROUND2_MAX_TOKENS = 2500;
+const SIMULATION_LOCK_TTL_SECONDS = 20 * 60;
+const SIMULATION_TASK_TTL_SECONDS = 30 * 60;
+const SIMULATION_POLL_INTERVAL_MS = 30 * 1000;
 const PUBLISH_MIN_PROBABILITY = 0;
 const PANEL_MIN_PROBABILITY = 0.1;
 const CANONICAL_PAYLOAD_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
@@ -51,6 +63,13 @@ const MIN_TARGET_PUBLISHED_FORECASTS = 10;
 const MAX_TARGET_PUBLISHED_FORECASTS = 14;
 const MAX_PRESELECTED_FORECASTS_PER_FAMILY = 3;
 const MAX_PRESELECTED_FORECASTS_PER_SITUATION = 2;
+// stateKind values that legitimately drive maritime energy/freight supply_chain forecasts.
+// Defined at module scope — not per-call — to avoid re-allocating the Set on every invocation.
+const MARITIME_BUCKET_STATE_KINDS = new Set([
+  'maritime_disruption', 'port_disruption', 'shipping_disruption',
+  'chokepoint_closure', 'naval_blockade', 'piracy_escalation',
+  'transport_pressure', // shipping route pressure (e.g. Red Sea, Suez transit delays) is maritime-relevant
+]);
 const CYBER_MIN_THREATS_PER_COUNTRY = 5;
 const CYBER_MAX_FORECASTS = 12;
 const CYBER_SCORE_TYPE_MULTIPLIER = 1.5;    // bonus per distinct threat type
@@ -1207,6 +1226,15 @@ function computeStateDerivedBucketCandidate(domain, stateUnit, bucket, marketCon
     (domain === 'supply_chain' && directBucket ? 0.05 : 0),
   );
 
+  // Maritime-specific buckets (energy, freight in supply_chain) require actual maritime disruption state.
+  // Without this gate, security escalations in landlocked/non-chokepoint states (Brazil, Cuba, etc.)
+  // generate spurious "Maritime energy flow disruption" forecasts that have no causal basis.
+  const requiresMaritimeStateKind = domain === 'supply_chain' && ['freight', 'energy'].includes(bucket.id);
+  // Block if stateKind absent OR not in allowlist — falsy stateKind must NOT bypass this gate.
+  if (requiresMaritimeStateKind && !MARITIME_BUCKET_STATE_KINDS.has(stateUnit.stateKind ?? '')) {
+    return null;
+  }
+
   const supplyChainFallbackEligible = domain === 'supply_chain'
     && stateDomainMatch
     && directBucket
@@ -1420,7 +1448,43 @@ function deriveStateDrivenForecasts({
     derived.push(fallback.prediction);
   }
 
-  return derived
+  // Cross-state semantic deduplication: cap same (bucketId × stateKind) combinations.
+  // Without this, every monitored sea/chokepoint produces an identical "Inflation from [X]" bet —
+  // Baltic Sea 66%, Red Sea 66%, Persian Gulf 66%, Hormuz 70%... all the same bet, useless.
+  // Keep the top MAX_CROSS_STATE_SAME_BUCKET_KIND by (probability × confidence), and require
+  // a minimum probability spread so near-identical scores don't both make the cut.
+  const MAX_CROSS_STATE_SAME_BUCKET_KIND = 2;
+  const MIN_CROSS_STATE_PROBABILITY_SPREAD = 0.06;
+
+  const crossGroups = new Map(); // groupKey → sorted array of preds
+  const noDerivation = [];
+  for (const pred of derived) {
+    const bucketId = pred.stateDerivation?.bucketId || '';
+    const stateKind = pred.stateDerivation?.sourceStateKind || '';
+    if (!bucketId || !stateKind) { noDerivation.push(pred); continue; }
+    const key = `${bucketId}:${stateKind}`;
+    if (!crossGroups.has(key)) crossGroups.set(key, []);
+    crossGroups.get(key).push(pred);
+  }
+
+  const crossDeduped = [...noDerivation];
+  for (const group of crossGroups.values()) {
+    // Sort by probability descending so the spread check (probability delta) is monotonic.
+    // Secondary: confidence breaks ties to prefer more certain forecasts.
+    group.sort((a, b) => b.probability - a.probability || b.confidence - a.confidence);
+    let lastKeptProb = null;
+    let keptCount = 0;
+    for (const pred of group) {
+      if (keptCount >= MAX_CROSS_STATE_SAME_BUCKET_KIND) break;
+      // Skip if too close to the last kept forecast — ensures meaningful differentiation between kept bets.
+      if (lastKeptProb !== null && Math.abs(pred.probability - lastKeptProb) < MIN_CROSS_STATE_PROBABILITY_SPREAD) continue;
+      lastKeptProb = pred.probability;
+      keptCount++;
+      crossDeduped.push(pred);
+    }
+  }
+
+  return crossDeduped
     .sort((a, b) => (Number(a.stateDerivedBackfill) - Number(b.stateDerivedBackfill))
       || (b.probability * b.confidence) - (a.probability * a.confidence)
       || a.title.localeCompare(b.title));
@@ -11861,7 +11925,8 @@ function isMaritimeChokeEnergyCandidate(candidate) {
   const routeKey = candidate.routeFacilityKey || '';
   if (!routeKey || !Object.prototype.hasOwnProperty.call(CHOKEPOINT_MARKET_REGIONS, routeKey)) return false;
   const bucketArr = candidate.marketBucketIds || [];
-  const topBucket = candidate.marketContext?.topBucketId || '';
+  // Accept both nested (marketContext.topBucketId) and flat (topBucketId) shapes
+  const topBucket = candidate.marketContext?.topBucketId || candidate.topBucketId || '';
   return bucketArr.includes('energy') || bucketArr.includes('freight') || topBucket === 'energy' || topBucket === 'freight'
     || SIMULATION_ENERGY_COMMODITY_KEYS.has(candidate.commodityKey || '');
 }
@@ -15307,7 +15372,8 @@ if (_isDirectRun) {
         const snapshotWrite = await writeDeepForecastSnapshot(snapshotPayload, { runId });
         if (snapshotWrite?.storageConfig && (data.impactExpansionCandidates || []).length > 0) {
           writeSimulationPackage(snapshotPayload, { storageConfig: snapshotWrite.storageConfig, priorWorldState: data.priorWorldState || null })
-            .catch((err) => console.warn(`  [SimulationPackage] Write failed: ${err.message}`));
+            .then(() => enqueueSimulationTask(runId))
+            .catch((err) => console.warn(`  [SimulationPackage] Write/enqueue failed: ${err.message}`));
         }
         if (deepForecast.status === 'queued' && (data.impactExpansionCandidates || []).length > 0) {
           if (snapshotWrite?.snapshotKey) {
@@ -15377,6 +15443,444 @@ if (_isDirectRun) {
       },
     ],
   });
+}
+
+// ---------------------------------------------------------------------------
+// MiroFish Phase 2 — Theater-Limited Simulation Runner
+// ---------------------------------------------------------------------------
+
+function buildSimulationRound1SystemPrompt(theater, pkg) {
+  const theaterEntities = (pkg.entities || []).filter(
+    (e) => !e.relevanceToTheater || e.relevanceToTheater === theater.theaterId,
+  );
+  const entityList = theaterEntities.slice(0, 10).map(
+    (e) => `- ${sanitizeForPrompt(e.entityId)} | ${sanitizeForPrompt(e.name)} | class=${sanitizeForPrompt(e.class)} | stance=${sanitizeForPrompt(e.stance || 'unknown')}`,
+  ).join('\n');
+
+  const theaterSeeds = (pkg.eventSeeds || []).filter((s) => s.theaterId === theater.theaterId);
+  const seedList = theaterSeeds.slice(0, 8).map(
+    (s) => `- ${sanitizeForPrompt(s.seedId)} [${sanitizeForPrompt(s.type)}] ${sanitizeForPrompt(s.summary)} (${sanitizeForPrompt(s.timing)})`,
+  ).join('\n');
+
+  const constraints = (pkg.constraints?.[theater.theaterId] || pkg.constraints?.theater || [])
+    .map((c) => `- ${sanitizeForPrompt(c)}`).join('\n') || '- No explicit constraints';
+  const evalTargets = (pkg.evaluationTargets?.[theater.theaterId] || pkg.evaluationTargets?.theater || [])
+    .map((t) => `- ${sanitizeForPrompt(t)}`).join('\n') || '- General market and security dynamics';
+  const requirement = sanitizeForPrompt(
+    pkg.simulationRequirement?.[theater.theaterId] || theater.theaterLabel || theater.theaterId,
+  );
+
+  return `You are a geopolitical simulation engine. Simulate actor behavior for a theater-level disruption scenario.
+
+SIMULATION CONTEXT:
+${requirement}
+
+THEATER: ${sanitizeForPrompt(theater.theaterLabel || theater.theaterId)} | Region: ${sanitizeForPrompt(theater.theaterRegion || theater.dominantRegion || '')}
+
+ACTORS (use exact entityId when citing actors):
+${entityList || '- (none specified)'}
+
+EVENT SEEDS (cite seedId in reactions where applicable):
+${seedList || '- (none specified)'}
+
+CONSTRAINTS:
+${constraints}
+
+EVALUATION TARGETS:
+${evalTargets}
+
+INSTRUCTIONS:
+Generate EXACTLY 3 divergent paths named "escalation", "containment", and "spillover". For each path, model the initial actor reactions in the first 24 hours.
+
+- Actors MUST be from the list above (use their exact entityId)
+- Cite event seeds (seedId) in reactions where applicable
+- Do NOT invent actors, routes, or commodities not present above
+- timing format: "T+0h", "T+6h", "T+12h", "T+24h"
+- Maximum 3 initialReactions per path
+- note: A brief (≤200 char) meta-observation on the divergence logic
+
+Return ONLY a JSON object with no markdown fences:
+{
+  "paths": [
+    {
+      "pathId": "escalation",
+      "label": "<short label>",
+      "summary": "<≤200 char summary>",
+      "initialReactions": [
+        { "actorId": "<entityId>", "actorName": "<name>", "action": "<≤120 char>", "timing": "T+0h" }
+      ]
+    },
+    { "pathId": "containment", "label": "...", "summary": "...", "initialReactions": [] },
+    { "pathId": "spillover", "label": "...", "summary": "...", "initialReactions": [] }
+  ],
+  "dominantReactions": ["<actor name>: <action summary>"],
+  "note": "<meta-observation>"
+}`;
+}
+
+function buildSimulationRound2SystemPrompt(theater, pkg, round1) {
+  const r1Paths = (round1?.paths || []).slice(0, 3);
+  const pathSummaries = r1Paths.map(
+    (p) => `- ${p.pathId}: ${sanitizeForPrompt(p.summary || '')} — actors: ${(p.initialReactions || []).slice(0, 3).map((r) => sanitizeForPrompt(r.actorId || '')).join(', ')}`,
+  ).join('\n') || '- (no round 1 paths available)';
+
+  const theaterEntities = (pkg.entities || []).filter(
+    (e) => !e.relevanceToTheater || e.relevanceToTheater === theater.theaterId,
+  );
+  const entityIds = theaterEntities.slice(0, 10).map((e) => sanitizeForPrompt(e.entityId || '')).join(', ');
+
+  const evalTargets = (pkg.evaluationTargets?.[theater.theaterId] || pkg.evaluationTargets?.theater || [])
+    .map((t) => `- ${sanitizeForPrompt(t)}`).join('\n') || '- General market and security dynamics';
+
+  return `You are a geopolitical simulation engine. This is ROUND 2 of a 2-round theater simulation.
+
+THEATER: ${sanitizeForPrompt(theater.theaterLabel || theater.theaterId)} | Region: ${sanitizeForPrompt(theater.theaterRegion || theater.dominantRegion || '')}
+
+ROUND 1 PATH SUMMARIES:
+${pathSummaries}
+
+VALID ACTOR IDs: ${entityIds || '(see round 1)'}
+
+EVALUATION TARGETS:
+${evalTargets}
+
+INSTRUCTIONS:
+For each of the 3 paths from Round 1 (escalation, containment, spillover), generate the EVOLVED outcome after 72 hours.
+
+- keyActors: 2-4 actor IDs that drive this path
+- roundByRoundEvolution: 2 entries (round 1 summary, round 2 evolution)
+- timingMarkers: 2-4 key events with timing (T+Nh format)
+- stabilizers: 2-4 factors that could prevent the worst outcome
+- invalidators: 2-4 conditions that would invalidate this path
+- confidence: 0.0-1.0 based on evidence strength
+
+Return ONLY a JSON object with no markdown fences:
+{
+  "paths": [
+    {
+      "pathId": "escalation",
+      "label": "<short label>",
+      "summary": "<≤200 char evolved summary>",
+      "keyActors": ["<entityId>"],
+      "roundByRoundEvolution": [
+        { "round": 1, "summary": "<≤160 char>" },
+        { "round": 2, "summary": "<≤160 char>" }
+      ],
+      "confidence": 0.0,
+      "timingMarkers": [{ "event": "<≤80 char>", "timing": "T+Nh" }]
+    },
+    { "pathId": "containment", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.0, "timingMarkers": [] },
+    { "pathId": "spillover", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.0, "timingMarkers": [] }
+  ],
+  "stabilizers": ["<≤100 char>"],
+  "invalidators": ["<≤100 char>"],
+  "globalObservations": "<≤300 char>",
+  "confidenceNotes": "<≤200 char>"
+}`;
+}
+
+function tryParseSimulationRoundPayload(text, round) {
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed?.paths)) return { paths: null };
+    const expectedIds = new Set(['escalation', 'containment', 'spillover']);
+    const paths = parsed.paths.filter((p) => p && expectedIds.has(p.pathId));
+    if (paths.length === 0) return { paths: null };
+    if (round === 2) {
+      return {
+        paths,
+        stabilizers: Array.isArray(parsed.stabilizers) ? parsed.stabilizers.map(String).slice(0, 6) : [],
+        invalidators: Array.isArray(parsed.invalidators) ? parsed.invalidators.map(String).slice(0, 6) : [],
+        globalObservations: String(parsed.globalObservations || '').slice(0, 300),
+        confidenceNotes: String(parsed.confidenceNotes || '').slice(0, 200),
+      };
+    }
+    return {
+      paths,
+      dominantReactions: Array.isArray(parsed.dominantReactions) ? parsed.dominantReactions.map(String).slice(0, 6) : [],
+      note: String(parsed.note || '').slice(0, 200),
+    };
+  } catch {
+    return { paths: null };
+  }
+}
+
+function extractSimulationRoundPayload(text, round) {
+  const cleaned = text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<\|thinking\|>[\s\S]*?<\|\/thinking\|>/gi, '')
+    .replace(/```json\s*/gi, '```')
+    .trim();
+  const candidates = [];
+  const fencedBlocks = [...cleaned.matchAll(/```([\s\S]*?)```/g)].map((m) => m[1].trim());
+  candidates.push(...fencedBlocks);
+  candidates.push(cleaned);
+
+  for (const candidate of candidates) {
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    const direct = tryParseSimulationRoundPayload(trimmed, round);
+    if (direct.paths) return { ...direct, diagnostics: { stage: 'direct', preview: sanitizeForPrompt(trimmed).slice(0, 160) } };
+    const firstObject = extractFirstJsonObject(trimmed);
+    if (firstObject) {
+      const parsed = tryParseSimulationRoundPayload(firstObject, round);
+      if (parsed.paths) return { ...parsed, diagnostics: { stage: 'extracted', preview: sanitizeForPrompt(firstObject).slice(0, 160) } };
+    }
+  }
+  return { paths: null, diagnostics: { stage: 'no_json', preview: sanitizeForPrompt(cleaned).slice(0, 160) } };
+}
+
+async function runTheaterSimulation(theater, pkg) {
+  const theaterLabel = sanitizeForPrompt(theater.theaterLabel || theater.theaterId);
+  const userPrompt1 = `Theater: ${theaterLabel}\nRun ID: ${pkg.runId}\nGenerate Round 1 actor reactions for the 3 divergent paths.`;
+
+  const r1Raw = await callForecastLLM(
+    buildSimulationRound1SystemPrompt(theater, pkg),
+    userPrompt1,
+    { ...getForecastLlmCallOptions('simulation_round_1'), stage: 'simulation_round_1', maxTokens: SIMULATION_ROUND1_MAX_TOKENS, temperature: 0 },
+  );
+  if (!r1Raw) return { failed: true, reason: 'round1_llm_failed' };
+  const r1 = extractSimulationRoundPayload(r1Raw.text, 1);
+  if (!r1.paths) return { failed: true, reason: 'round1_parse_failed', diagnostics: r1.diagnostics };
+
+  const userPrompt2 = `Theater: ${theaterLabel}\nRun ID: ${pkg.runId}\nGenerate Round 2 path evolution (72h) based on the Round 1 paths.`;
+  const r2Raw = await callForecastLLM(
+    buildSimulationRound2SystemPrompt(theater, pkg, r1),
+    userPrompt2,
+    { ...getForecastLlmCallOptions('simulation_round_2'), stage: 'simulation_round_2', maxTokens: SIMULATION_ROUND2_MAX_TOKENS, temperature: 0 },
+  );
+  if (!r2Raw) return { round1: r1, round2: null, failed: false };
+  const r2 = extractSimulationRoundPayload(r2Raw.text, 2);
+  return { round1: r1, round2: r2.paths ? r2 : null, failed: false };
+}
+
+function buildSimulationOutcomeKey(runId, generatedAt) {
+  const prefix = buildTraceRunPrefix(runId, generatedAt, FORECAST_DEEP_RUN_PREFIX);
+  return `${prefix}/simulation-outcome.json`;
+}
+
+async function writeSimulationOutcome(pkg, outcome, { storageConfig } = {}) {
+  const config = storageConfig ?? resolveR2StorageConfig();
+  if (!config || !pkg?.runId) return null;
+  const { runId, generatedAt } = pkg;
+  const outcomeKey = buildSimulationOutcomeKey(runId, generatedAt || Date.now());
+  await putR2JsonObject(config, outcomeKey, outcome, {
+    runid: String(runId),
+    kind: 'simulation_outcome',
+    schema_version: SIMULATION_OUTCOME_SCHEMA_VERSION,
+  });
+  const { url, token } = getRedisCredentials();
+  const uiTheaters = (outcome.theaterResults || []).map((tr) => ({
+    theaterId: tr.theaterId,
+    theaterLabel: tr.theaterLabel || tr.theaterId,
+    stateKind: tr.stateKind || '',
+    topPaths: (tr.topPaths || []).slice(0, 2).map((p) => ({
+      label: p.label,
+      summary: p.summary,
+      confidence: p.confidence,
+      keyActors: (p.keyActors || []).slice(0, 4),
+    })),
+    dominantReactions: (tr.dominantReactions || []).slice(0, 3),
+    stabilizers: (tr.stabilizers || []).slice(0, 3),
+    invalidators: (tr.invalidators || []).slice(0, 2),
+  }));
+  await redisCommand(url, token, [
+    'SET',
+    SIMULATION_OUTCOME_LATEST_KEY,
+    JSON.stringify({
+      runId,
+      outcomeKey,
+      schemaVersion: SIMULATION_OUTCOME_SCHEMA_VERSION,
+      theaterCount: (outcome.theaterResults || []).length,
+      generatedAt: generatedAt || Date.now(),
+      uiTheaters,
+    }),
+    'EX',
+    String(TRACE_REDIS_TTL_SECONDS),
+  ]);
+  return { outcomeKey };
+}
+
+function validateRunId(runId) { return typeof runId === 'string' && VALID_RUN_ID_RE.test(runId); }
+
+function buildSimulationTaskKey(runId) { return `${SIMULATION_TASK_KEY_PREFIX}:${runId}`; }
+function buildSimulationLockKey(runId) { return `${SIMULATION_LOCK_KEY_PREFIX}:${runId}`; }
+
+async function enqueueSimulationTask(runId) {
+  if (!runId) return { queued: false, reason: 'missing_run_id' };
+  if (!validateRunId(runId)) return { queued: false, reason: 'invalid_run_id_format' };
+  const { url, token } = getRedisCredentials();
+  const queued = await redisCommand(url, token, [
+    'SET', buildSimulationTaskKey(runId),
+    JSON.stringify({ runId, createdAt: Date.now() }),
+    'EX', String(SIMULATION_TASK_TTL_SECONDS), 'NX',
+  ]);
+  if (queued?.result !== 'OK') return { queued: false, reason: 'duplicate' };
+  await redisCommand(url, token, ['ZADD', SIMULATION_TASK_QUEUE_KEY, String(Date.now()), runId]);
+  await redisCommand(url, token, ['EXPIRE', SIMULATION_TASK_QUEUE_KEY, String(TRACE_REDIS_TTL_SECONDS)]);
+  return { queued: true, reason: '' };
+}
+
+async function claimSimulationTask(runId, workerId) {
+  if (!runId) return null;
+  const { url, token } = getRedisCredentials();
+  const lockKey = buildSimulationLockKey(runId);
+  const claim = await redisCommand(url, token, [
+    'SET', lockKey, workerId, 'EX', String(SIMULATION_LOCK_TTL_SECONDS), 'NX',
+  ]);
+  if (claim?.result !== 'OK') return null;
+  const taskRaw = await redisGet(url, token, buildSimulationTaskKey(runId));
+  if (!taskRaw?.runId) {
+    await redisDel(url, token, lockKey);
+    return null;
+  }
+  return taskRaw;
+}
+
+async function completeSimulationTask(runId) {
+  if (!runId) return;
+  const { url, token } = getRedisCredentials();
+  await redisCommand(url, token, ['ZREM', SIMULATION_TASK_QUEUE_KEY, runId]);
+  await redisDel(url, token, buildSimulationTaskKey(runId));
+  await redisDel(url, token, buildSimulationLockKey(runId));
+}
+
+async function listQueuedSimulationTasks(limit = 10) {
+  const { url, token } = getRedisCredentials();
+  const response = await redisCommand(url, token, [
+    'ZRANGE', SIMULATION_TASK_QUEUE_KEY, '0', String(Math.max(0, limit - 1)),
+  ]);
+  return Array.isArray(response?.result) ? response.result : [];
+}
+
+async function processNextSimulationTask(options = {}) {
+  const workerId = options.workerId || `sim-worker-${process.pid}-${Date.now()}`;
+  const queuedRunIds = options.runId ? [options.runId] : await listQueuedSimulationTasks(10);
+
+  for (const runId of queuedRunIds) {
+    if (!validateRunId(runId)) {
+      console.warn(`  [Simulation] Skipping invalid runId format: ${String(runId).slice(0, 80)}`);
+      continue;
+    }
+    const task = await claimSimulationTask(runId, workerId);
+    if (!task) continue;
+
+    try {
+      const { url, token } = getRedisCredentials();
+
+      // Idempotency: skip if already processed for this runId
+      const existing = await redisGet(url, token, SIMULATION_OUTCOME_LATEST_KEY);
+      if (existing?.runId === runId) {
+        console.log(`  [Simulation] Skipping ${runId} — outcome already written`);
+        await completeSimulationTask(runId);
+        return { status: 'skipped', reason: 'already_processed', runId };
+      }
+
+      // Read package pointer from Redis
+      const pkgPointer = await redisGet(url, token, SIMULATION_PACKAGE_LATEST_KEY);
+      if (!pkgPointer?.pkgKey) {
+        console.warn(`  [Simulation] No package pointer for ${runId}`);
+        await completeSimulationTask(runId);
+        return { status: 'failed', reason: 'no_package_pointer', runId };
+      }
+      if (pkgPointer.runId && pkgPointer.runId !== runId) {
+        console.warn(`  [Simulation] Package runId mismatch: task=${runId} pkg=${pkgPointer.runId} — using latest package (Phase 2 behaviour)`);
+      }
+
+      const storageConfig = resolveR2StorageConfig();
+      if (!storageConfig) {
+        await completeSimulationTask(runId);
+        return { status: 'failed', reason: 'no_storage_config', runId };
+      }
+
+      const pkgData = await getR2JsonObject(storageConfig, pkgPointer.pkgKey);
+      if (!pkgData?.selectedTheaters) {
+        await completeSimulationTask(runId);
+        return { status: 'failed', reason: 'package_read_failed', runId };
+      }
+
+      // Phase 2 scope: maritime chokepoint + energy/logistics theaters only
+      const eligibleTheaters = (pkgData.selectedTheaters || []).filter((t) =>
+        isMaritimeChokeEnergyCandidate(t),
+      );
+      console.log(`  [Simulation] ${runId}: ${eligibleTheaters.length}/${pkgData.selectedTheaters.length} theaters eligible`);
+
+      const theaterResults = [];
+      const failedTheaters = [];
+
+      for (const theater of eligibleTheaters) {
+        console.log(`  [Simulation] Running theater: ${theater.theaterId}`);
+        const result = await runTheaterSimulation(theater, pkgData);
+        if (result.failed) {
+          console.warn(`  [Simulation] Theater ${theater.theaterId} failed: ${result.reason}`);
+          failedTheaters.push({ theaterId: theater.theaterId, reason: result.reason });
+          continue;
+        }
+
+        const r2Paths = result.round2?.paths || [];
+        const r1Paths = result.round1?.paths || [];
+        const mergedPaths = (r2Paths.length ? r2Paths : r1Paths).map((p) => {
+          const r1Path = r1Paths.find((r) => r.pathId === p.pathId);
+          return {
+            pathId: p.pathId,
+            label: sanitizeForPrompt(p.label || p.pathId).slice(0, 80),
+            summary: sanitizeForPrompt(p.summary || '').slice(0, 200),
+            keyActors: Array.isArray(p.keyActors) ? p.keyActors.map((s) => sanitizeForPrompt(String(s)).slice(0, 80)).slice(0, 6) : [],
+            roundByRoundEvolution: Array.isArray(p.roundByRoundEvolution)
+              ? p.roundByRoundEvolution.map((r) => ({ round: r.round, summary: sanitizeForPrompt(r.summary || '').slice(0, 160) }))
+              : [{ round: 1, summary: sanitizeForPrompt((r1Path?.summary || p.summary || '')).slice(0, 160) }],
+            confidence: typeof p.confidence === 'number' ? Math.max(0, Math.min(1, p.confidence)) : 0.5,
+            timingMarkers: Array.isArray(p.timingMarkers)
+              ? p.timingMarkers.slice(0, 6).map((m) => ({ event: sanitizeForPrompt(m.event || '').slice(0, 80), timing: String(m.timing || 'T+0h').slice(0, 10) }))
+              : [],
+          };
+        });
+
+        theaterResults.push({
+          theaterId: theater.theaterId,
+          theaterLabel: theater.label || theater.dominantRegion || theater.theaterId,
+          stateKind: theater.stateKind || '',
+          topPaths: mergedPaths,
+          dominantReactions: (result.round1?.dominantReactions || []).map((s) => sanitizeForPrompt(String(s)).slice(0, 120)).slice(0, 6),
+          stabilizers: (result.round2?.stabilizers || []).map((s) => sanitizeForPrompt(String(s)).slice(0, 120)).slice(0, 6),
+          invalidators: (result.round2?.invalidators || []).map((s) => sanitizeForPrompt(String(s)).slice(0, 120)).slice(0, 6),
+          timingMarkers: (result.round2?.paths?.[0]?.timingMarkers || []).slice(0, 4).map((m) => ({ event: sanitizeForPrompt(m.event || '').slice(0, 80), timing: String(m.timing || 'T+0h').slice(0, 10) })),
+        });
+      }
+
+      const outcome = {
+        runId,
+        schemaVersion: SIMULATION_OUTCOME_SCHEMA_VERSION,
+        runnerVersion: SIMULATION_RUNNER_VERSION,
+        sourceSimulationPackageKey: pkgPointer.pkgKey,
+        theaterResults,
+        failedTheaters,
+        globalObservations: eligibleTheaters.length === 0
+          ? 'No maritime chokepoint/energy theaters in package'
+          : theaterResults.length === 0 ? 'All theaters failed simulation' : '',
+        confidenceNotes: `${theaterResults.length}/${eligibleTheaters.length} theaters completed`,
+        generatedAt: pkgData.generatedAt || Date.now(),
+      };
+
+      const writeResult = await writeSimulationOutcome(pkgData, outcome, { storageConfig });
+      await completeSimulationTask(runId);
+      console.log(`  [Simulation] Completed ${runId}: ${theaterResults.length} theaters → ${writeResult?.outcomeKey}`);
+      return { status: 'completed', runId, theaterCount: theaterResults.length, outcomeKey: writeResult?.outcomeKey };
+    } catch (err) {
+      console.warn(`  [Simulation] Task failed for ${runId}: ${err.message}`);
+      await completeSimulationTask(runId);
+      return { status: 'failed', reason: err.message, runId };
+    }
+  }
+  return { status: 'idle' };
+}
+
+async function runSimulationWorker({ once = false, runId = '' } = {}) {
+  for (;;) {
+    const result = await processNextSimulationTask({ runId });
+    if (once) return result;
+    if (result?.status === 'idle') await sleep(SIMULATION_POLL_INTERVAL_MS);
+  }
 }
 
 export {
@@ -15535,6 +16039,17 @@ export {
   enqueueDeepForecastTask,
   processNextDeepForecastTask,
   runDeepForecastWorker,
+  SIMULATION_OUTCOME_LATEST_KEY,
+  SIMULATION_OUTCOME_SCHEMA_VERSION,
+  buildSimulationOutcomeKey,
+  writeSimulationOutcome,
+  buildSimulationRound1SystemPrompt,
+  buildSimulationRound2SystemPrompt,
+  extractSimulationRoundPayload,
+  runTheaterSimulation,
+  enqueueSimulationTask,
+  processNextSimulationTask,
+  runSimulationWorker,
   scoreImpactExpansionQuality,
   buildImpactExpansionDebugPayload,
   runImpactExpansionPromptRefinement,

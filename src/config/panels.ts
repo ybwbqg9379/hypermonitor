@@ -79,6 +79,7 @@ const FULL_PANELS: Record<string, PanelConfig> = {
   'tech-readiness': { name: 'Tech Readiness Index', enabled: true, priority: 2 },
   'world-clock': { name: 'World Clock', enabled: true, priority: 2 },
   'national-debt': { name: 'Global Debt Clock', enabled: true, priority: 2 },
+  'cross-source-signals': { name: 'Cross-Source Signals', enabled: true, priority: 2 },
   'market-implications': { name: 'AI Market Implications', enabled: true, priority: 1, premium: 'locked' as const },
 };
 

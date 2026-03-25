@@ -38,6 +38,7 @@ const BOOTSTRAP_KEYS = {
   comtradeFlows:     'comtrade:flows:v1',
   blsSeries:         'bls:series:v1',
   sanctionsPressure: 'sanctions:pressure:v1',
+  crossSourceSignals: 'intelligence:cross-source-signals:v1',
   sanctionsEntities: 'sanctions:entities:v1',
   radiationWatch:    'radiation:observations:v1',
   consumerPricesOverview:   'consumer-prices:overview:ae',
@@ -96,11 +97,12 @@ const STANDALONE_KEYS = {
   marketImplications:       'intelligence:market-implications:v1',
   hormuzTracker:            'supply_chain:hormuz_tracker:v1',
   simulationPackageLatest:  'forecast:simulation-package:latest',
+  simulationOutcomeLatest:  'forecast:simulation-outcome:latest',
 };
 
 const SEED_META = {
   earthquakes:      { key: 'seed-meta:seismology:earthquakes',  maxStaleMin: 30 },
-  wildfires:        { key: 'seed-meta:wildfire:fires',          maxStaleMin: 120 },
+  wildfires:        { key: 'seed-meta:wildfire:fires',          maxStaleMin: 360 }, // FIRMS NRT resets at midnight UTC; new-day data takes 3-6h to accumulate
   outages:          { key: 'seed-meta:infra:outages',           maxStaleMin: 30 },
   climateAnomalies: { key: 'seed-meta:climate:anomalies',       maxStaleMin: 120 }, // runs as independent Railway cron (0 */2 * * *)
   unrestEvents:     { key: 'seed-meta:unrest:events',           maxStaleMin: 120 }, // 45min cron; 120 = 2h grace (was 75 = 30min buffer, too tight)
@@ -132,7 +134,7 @@ const SEED_META = {
   ucdpEvents:       { key: 'seed-meta:conflict:ucdp-events',      maxStaleMin: 420 },
   militaryFlights:  { key: 'seed-meta:military:flights',           maxStaleMin: 30 }, // cron ~10min (LIVE_TTL=600s); 30min = 3x interval,
   satellites:       { key: 'seed-meta:intelligence:satellites',    maxStaleMin: 240 }, // CelesTrak every 120min; 240min = absorbs one missed cycle
-  weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 30 },
+  weatherAlerts:    { key: 'seed-meta:weather:alerts',             maxStaleMin: 45 }, // relay loop every 15min; 45 = 3× interval (was 30 = 2×, too tight on relay hiccup)
   spending:         { key: 'seed-meta:economic:spending',          maxStaleMin: 120 },
   techEvents:       { key: 'seed-meta:research:tech-events',       maxStaleMin: 480 },
   gdeltIntel:       { key: 'seed-meta:intelligence:gdelt-intel',   maxStaleMin: 420 }, // 6h cron + 1h grace; CACHE_TTL is 24h so per-topic merge always has a prior snapshot
@@ -149,12 +151,13 @@ const SEED_META = {
   corridorrisk:        { key: 'seed-meta:supply_chain:corridorrisk',         maxStaleMin: 120 },
   chokepointTransits:  { key: 'seed-meta:supply_chain:chokepoint_transits',  maxStaleMin: 30 }, // relay every 10min; 30min = 3x interval,
   transitSummaries:    { key: 'seed-meta:supply_chain:transit-summaries',    maxStaleMin: 30 }, // relay every 10min; 30min = 3x interval,
-  usniFleet:           { key: 'seed-meta:military:usni-fleet',               maxStaleMin: 480 },
+  usniFleet:           { key: 'seed-meta:military:usni-fleet',               maxStaleMin: 720 }, // relay loop every 6h; 720 = 2× interval (was 480 = 1.3×, too tight)
   securityAdvisories:  { key: 'seed-meta:intelligence:advisories',           maxStaleMin: 120 },
   customsRevenue:      { key: 'seed-meta:trade:customs-revenue',              maxStaleMin: 1440 },
   comtradeFlows:       { key: 'seed-meta:trade:comtrade-flows',               maxStaleMin: 2880 }, // 24h cron; 2880min = 48h = 2x interval
   blsSeries:           { key: 'seed-meta:economic:bls-series',                maxStaleMin: 2880 }, // daily seed; 2880min = 48h = 2x interval
   sanctionsPressure:   { key: 'seed-meta:sanctions:pressure',                 maxStaleMin: 720 },
+  crossSourceSignals:  { key: 'seed-meta:intelligence:cross-source-signals',  maxStaleMin: 30 }, // 15min cron; 30min = 2x interval
   sanctionsEntities:   { key: 'seed-meta:sanctions:entities',                 maxStaleMin: 1440 }, // 12h cron; 1440min = 24h = 2x interval
   radiationWatch:      { key: 'seed-meta:radiation:observations',             maxStaleMin: 30 },
   groceryBasket:       { key: 'seed-meta:economic:grocery-basket',            maxStaleMin: 10080 }, // weekly seed; 10080 = 7 days
@@ -192,11 +195,12 @@ const ON_DEMAND_KEYS = new Set([
   'militaryForecastInputs', // intermediate seed-to-seed pipeline key; only populated after seed-military-flights runs
   'marketImplications', // LLM-generated inside forecast cron; can fail silently on LLM errors — degrade to WARN not CRIT
   'simulationPackageLatest', // written by writeSimulationPackage after deep forecast runs; only present after first successful deep run
+  'simulationOutcomeLatest', // written by writeSimulationOutcome after simulation runs; only present after first successful simulation
 ]);
 
 // Keys where 0 records is a valid healthy state (e.g. no airports closed).
 // The key must still exist in Redis; only the record count can be 0.
-const EMPTY_DATA_OK_KEYS = new Set(['notamClosures', 'faaDelays', 'gpsjam', 'positiveGeoEvents']);
+const EMPTY_DATA_OK_KEYS = new Set(['notamClosures', 'faaDelays', 'gpsjam', 'positiveGeoEvents', 'weatherAlerts']);
 
 // Cascade groups: if any key in the group has data, all empty siblings are OK.
 // Theater posture uses live → stale → backup fallback chain.
@@ -241,7 +245,8 @@ function dataSize(parsed) {
                       'theaters', 'fleets', 'warnings', 'closures', 'cables',
                       'airports', 'closedIcaos', 'categories', 'regions', 'entries', 'satellites',
                       'sectors', 'statuses', 'scores', 'topics', 'advisories', 'months',
-                      'observations', 'datapoints', 'clusters']) {
+                      'observations', 'datapoints', 'clusters',
+                      'charts']) {
       if (Array.isArray(parsed[k])) return parsed[k].length;
     }
     return Object.keys(parsed).length;

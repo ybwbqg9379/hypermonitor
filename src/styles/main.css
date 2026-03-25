@@ -21145,7 +21145,7 @@ body.has-breaking-alert .panels-grid {
   vertical-align: top;
 }
 
-.gb-table .gb-item-col { min-width: 100px; text-align: left; }
+.gb-table .gb-item-col { min-width: 110px; text-align: left; position: sticky; left: 0; z-index: 2; background: var(--panel-bg); }
 
 .gb-country-header {
   text-align: center;
@@ -21158,9 +21158,11 @@ body.has-breaking-alert .panels-grid {
 
 .gb-table .gb-item-name {
   font-weight: 500;
-  background: var(--overlay-subtle);
+  min-width: 110px;
   position: sticky;
   left: 0;
+  z-index: 2;
+  background: var(--panel-bg);
   text-align: left;
 }
 
@@ -21204,6 +21206,8 @@ body.has-breaking-alert .panels-grid {
   text-align: right;
 }
 .gb-wow {
-  font-size: 0.7rem;
-  margin-left: 4px;
+  display: block;
+  font-size: 0.6rem;
+  opacity: 0.85;
+  margin-top: 1px;
 }

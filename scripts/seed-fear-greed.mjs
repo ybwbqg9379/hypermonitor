@@ -41,10 +41,10 @@ const FEAR_GREED_TTL = 64800; // 18h = 3x 6h interval
 const FRED_PREFIX = 'economic:fred:v1';
 
 // --- Yahoo Finance fetching (15 symbols, 150ms gaps) ---
-const YAHOO_SYMBOLS = ['^GSPC','^VIX','^VIX9D','^VIX3M','^SKEW','C:ISSU','GLD','TLT','SPY','RSP','DX-Y.NYB','XLK','XLF','XLE','XLV'];
+const YAHOO_SYMBOLS = ['^GSPC','^VIX','^VIX9D','^VIX3M','^SKEW','GLD','TLT','SPY','RSP','DX-Y.NYB','XLK','XLF','XLE','XLV','XLY','XLP','XLI','XLB','XLU','XLRE','XLC'];
 
 async function fetchYahooSymbol(symbol) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=3mo`;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`;
   const headers = { 'User-Agent': CHROME_UA, Accept: 'application/json' };
   try {
     // Use curl+proxy when available — Railway container IPs are periodically blocked by Yahoo.
@@ -226,6 +226,14 @@ function fredNMonthsAgo(obs, months) {
   const v = parseFloat(obs[idx]?.value ?? 'NaN');
   return Number.isFinite(v) ? v : null;
 }
+// For daily FRED series, 1 "month" ≈ 20 trading days — use this for trend comparisons
+function fredNTradingDaysAgo(obs, days) {
+  if (!obs) return null;
+  const idx = obs.length - 1 - days;
+  if (idx < 0) return null;
+  const v = parseFloat(obs[idx]?.value ?? 'NaN');
+  return Number.isFinite(v) ? v : null;
+}
 function labelFromScore(s) {
   if (s <= 20) return 'Extreme Fear';
   if (s <= 40) return 'Fear';
@@ -263,9 +271,11 @@ function scoreCategory(name, inputs) {
     case 'volatility': {
       const { vix, vix9d, vix3m } = inputs;
       if (vix == null) return { score: 50, inputs };
-      const vixScore = clamp(100 - ((vix - 12) / 28) * 100, 0, 100);
-      const termScore = (vix9d != null && vix3m != null) ? (vix / vix3m < 1 ? 70 : 30) : 50;
-      const termStructure = (vix9d != null && vix3m != null) ? (vix / vix3m < 1 ? 'contango' : 'backwardation') : 'unknown';
+      // VIX range 12–35: neutral at ~23.5 (historical avg ~19-20). Old range 12-40 centered neutral at VIX=26 — too permissive.
+      const vixScore = clamp(100 - ((vix - 12) / 23) * 100, 0, 100);
+      // Gate on vix3m only — vix9d is display-only and its absence shouldn't suppress the term structure signal.
+      const termScore = vix3m != null ? (vix / vix3m < 1 ? 70 : 30) : 50;
+      const termStructure = vix3m != null ? (vix / vix3m < 1 ? 'contango' : 'backwardation') : 'unknown';
       return { score: Math.round(vixScore * 0.7 + termScore * 0.3), inputs: { vix, vix9d, vix3m, termStructure } };
     }
     case 'positioning': {
@@ -309,11 +319,14 @@ function scoreCategory(name, inputs) {
     }
     case 'liquidity': {
       const { m2Obs, walclObs, sofr } = inputs;
-      const m2Latest = fredLatest(m2Obs), m2Ago = fredNMonthsAgo(m2Obs, 12);
+      // M2SL is weekly since 2021 — 52 observations back = 52 weeks = true YoY. Using 12 was ~13 weeks (quarterly).
+      const m2Latest = fredLatest(m2Obs), m2Ago = fredNMonthsAgo(m2Obs, 52);
       const m2Yoy = (m2Latest && m2Ago && m2Ago !== 0) ? ((m2Latest - m2Ago) / m2Ago) * 100 : null;
-      const walclLatest = fredLatest(walclObs), walclAgo = fredNMonthsAgo(walclObs, 1);
+      // WALCL is weekly — 4 observations back = ~1 month (MoM). Using 1 was week-over-week (too noisy).
+      const walclLatest = fredLatest(walclObs), walclAgo = fredNMonthsAgo(walclObs, 4);
       const fedBsMom = (walclLatest && walclAgo && walclAgo !== 0) ? ((walclLatest - walclAgo) / walclAgo) * 100 : null;
-      const m2Score = m2Yoy != null ? clamp(m2Yoy * 10 + 50, 0, 100) : 50;
+      // M2 YoY: normal annual growth is 4-6%; use 5x multiplier so 5% YoY ≈ 75
+      const m2Score = m2Yoy != null ? clamp(m2Yoy * 5 + 50, 0, 100) : 50;
       const fedScore = fedBsMom != null ? clamp(fedBsMom * 20 + 50, 0, 100) : 50;
       const sofrScore = sofr != null ? clamp(100 - sofr * 15, 0, 100) : 50;
       return { score: Math.round(m2Score * 0.4 + fedScore * 0.3 + sofrScore * 0.3), inputs: { m2Yoy, fedBsMom, sofr } };
@@ -321,9 +334,14 @@ function scoreCategory(name, inputs) {
     case 'credit': {
       const { hyObs, igObs } = inputs;
       const hySpread = fredLatest(hyObs), igSpread = fredLatest(igObs);
-      const hyScore = hySpread != null ? clamp(100 - ((hySpread - 3.0) / 5.0) * 100, 0, 100) : 50;
-      const igScore = igSpread != null ? clamp(100 - ((igSpread - 0.8) / 2.0) * 100, 0, 100) : 50;
-      const hyPrev = fredNMonthsAgo(hyObs, 1);
+      // HY OAS: historical range 2.0% (all-time tights) to 10.0% (crisis). Long-run avg ~5%.
+      // Old baseline was 3.0% (near tights), causing scores near 100 in normal conditions.
+      const hyScore = hySpread != null ? clamp(100 - ((hySpread - 2.0) / 8.0) * 100, 0, 100) : 50;
+      // IG OAS: historical range 0.4% (tights) to 3.0% (stressed). Long-run avg ~1.3%.
+      const igScore = igSpread != null ? clamp(100 - ((igSpread - 0.4) / 2.6) * 100, 0, 100) : 50;
+      // Use ~20 trading days (1 calendar month) for trend — fredNMonthsAgo(obs,1) only steps back
+      // 1 observation on daily data (= yesterday), which is noise not a trend signal.
+      const hyPrev = fredNTradingDaysAgo(hyObs, 20);
       const hyTrend = (hySpread != null && hyPrev != null) ? (hySpread < hyPrev ? 'narrowing' : hySpread > hyPrev ? 'widening' : 'stable') : 'stable';
       const trendScore = hyTrend === 'narrowing' ? 70 : hyTrend === 'widening' ? 30 : 50;
       return { score: Math.round(hyScore * 0.4 + igScore * 0.3 + trendScore * 0.3), inputs: { hySpread, igSpread, hyTrend30d: hyTrend } };
@@ -392,10 +410,11 @@ async function fetchAll() {
   const vix9d = yahoo['^VIX9D'];
   const vix3m = yahoo['^VIX3M'];
   const skew = yahoo['^SKEW'];
-  const cissu = yahoo['C:ISSU'];
   const gld = yahoo['GLD'], tlt = yahoo['TLT'], spy = yahoo['SPY'], rsp = yahoo['RSP'];
   const dxy = yahoo['DX-Y.NYB'];
   const xlk = yahoo['XLK'], xlf = yahoo['XLF'], xle = yahoo['XLE'], xlv = yahoo['XLV'];
+  const xly = yahoo['XLY'], xlp = yahoo['XLP'], xli = yahoo['XLI'], xlb = yahoo['XLB'];
+  const xlu = yahoo['XLU'], xlre = yahoo['XLRE'], xlc = yahoo['XLC'];
 
   const vixLive = vixData?.price ?? fredLatest(vixObs);
   const vix9dPrice = vix9d?.price ?? null;
@@ -409,18 +428,13 @@ async function fetchAll() {
   const pctAbove200d = barchartResult.status === 'fulfilled' ? barchartResult.value : null;
   const cryptoFg = macro?.fearGreed?.score ?? macro?.signals?.fearGreed?.value ?? null;
 
-  let advDecRatio = null;
-  if (cissu?.price != null) {
-    advDecRatio = cissu.price > 0 ? Math.min(cissu.price / 100, 2.0) : null;
-  }
-
   const cats = {
     sentiment: scoreCategory('sentiment', { cnnFg: cnn?.score ?? null, aaiBull: aaii?.bull ?? null, aaiBear: aaii?.bear ?? null, cryptoFg }),
     volatility: scoreCategory('volatility', { vix: vixLive, vix9d: vix9dPrice, vix3m: vix3mPrice }),
     positioning: scoreCategory('positioning', { totalPc: cboe.totalPc, equityPc: cboe.equityPc, skew: skewPrice }),
     trend: scoreCategory('trend', { prices: gspc?.closes ?? [] }),
-    breadth: scoreCategory('breadth', { mmthPrice: pctAbove200d, rspCloses: rsp?.closes, spyCloses: spy?.closes, advDecRatio }),
-    momentum: scoreCategory('momentum', { spxCloses: gspc?.closes, sectorCloses: { XLK: xlk?.closes, XLF: xlf?.closes, XLE: xle?.closes, XLV: xlv?.closes } }),
+    breadth: scoreCategory('breadth', { mmthPrice: pctAbove200d, rspCloses: rsp?.closes, spyCloses: spy?.closes, advDecRatio: null }),
+    momentum: scoreCategory('momentum', { spxCloses: gspc?.closes, sectorCloses: { XLK: xlk?.closes, XLF: xlf?.closes, XLE: xle?.closes, XLV: xlv?.closes, XLY: xly?.closes, XLP: xlp?.closes, XLI: xli?.closes, XLB: xlb?.closes, XLU: xlu?.closes, XLRE: xlre?.closes, XLC: xlc?.closes } }),
     liquidity: scoreCategory('liquidity', { m2Obs, walclObs, sofr: sofrRate }),
     credit: scoreCategory('credit', { hyObs, igObs }),
     macro: scoreCategory('macro', { fedObs, curveObs, unrateObs }),

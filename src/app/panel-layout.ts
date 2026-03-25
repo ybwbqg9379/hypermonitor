@@ -885,6 +885,10 @@ export class PanelLayoutManager implements AppModule {
       }),
     );
 
+    this.lazyPanel('cross-source-signals', () =>
+      import('@/components/CrossSourceSignalsPanel').then(m => new m.CrossSourceSignalsPanel()),
+    );
+
     this.createPanel('macro-signals', () => new MacroSignalsPanel());
     this.createPanel('fear-greed', () => new FearGreedPanel());
     this.createPanel('hormuz-tracker', () => new HormuzPanel());
