@@ -84,8 +84,18 @@ export function initEmbedBridge(): void {
   // Mark the document as embedded for CSS-driven UI customization
   document.documentElement.dataset.embedded = 'true';
 
+  // Track validated parent origin for outbound postMessage calls.
+  // Starts as '*' because the initial 'hypermonitor:ready' fires before
+  // any parent message arrives. Locks to the real origin on first receipt.
+  let parentOrigin = '*';
+
   window.addEventListener('message', (e: MessageEvent) => {
     if (!ALLOWED_ORIGINS.includes(e.origin)) return;
+
+    // Lock outbound targetOrigin to the validated parent
+    if (parentOrigin === '*') {
+      parentOrigin = e.origin;
+    }
 
     if (isPreferencesMessage(e.data)) {
       const { theme, locale } = e.data;
@@ -133,7 +143,7 @@ export function initEmbedBridge(): void {
   function forwardEvent(payload: Record<string, unknown>): void {
     window.parent.postMessage(
       { type: 'hypermonitor:event', payload },
-      '*'
+      parentOrigin
     );
   }
 
@@ -375,12 +385,12 @@ export function initEmbedBridge(): void {
         markets,
         timestamp: new Date().toISOString(),
       },
-    }, '*');
+    }, parentOrigin);
   }
 
   document.addEventListener('wm:intelligence-updated', buildAndForwardSnapshot);
 
   // Notify parent that the bridge is ready so it can (re-)send preferences
-  window.parent.postMessage({ type: 'hypermonitor:ready' }, '*');
+  window.parent.postMessage({ type: 'hypermonitor:ready' }, parentOrigin);
 }
 
