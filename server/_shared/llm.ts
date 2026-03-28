@@ -1,5 +1,6 @@
 import { CHROME_UA } from './constants';
 import { isProviderAvailable } from './llm-health';
+import { sanitizeForPrompt } from './llm-sanitize.js';
 
 export interface ProviderCredentials {
   apiUrl: string;
@@ -110,6 +111,7 @@ export function stripThinkingTags(text: string): string {
     .replace(/<\|begin_of_thought\|>[\s\S]*?<\|end_of_thought\|>/gi, '')
     .trim();
 
+  // Strip unterminated opening tags (no closing tag present)
   s = s
     .replace(/<think>[\s\S]*/gi, '')
     .replace(/<\|thinking\|>[\s\S]*/gi, '')
@@ -120,6 +122,7 @@ export function stripThinkingTags(text: string): string {
 
   return s;
 }
+
 
 const PROVIDER_CHAIN = ['ollama', 'groq', 'openrouter', 'generic'] as const;
 const PROVIDER_SET = new Set<string>(PROVIDER_CHAIN);
@@ -136,6 +139,8 @@ export interface LlmCallOptions {
   modelOverrides?: Partial<Record<LlmProviderName, string>>;
   stripThinkingTags?: boolean;
   validate?: (content: string) => boolean;
+  /** Optional text to append to the system message (index 0). Appended as \n\n---\n\n<systemAppend>. No-op if no system message at index 0. */
+  systemAppend?: string;
 }
 
 export interface LlmCallResult {
@@ -167,7 +172,7 @@ function resolveProviderChain(opts: {
 
 export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult | null> {
   const {
-    messages,
+    messages: rawMessages,
     temperature = 0.3,
     maxTokens = 1500,
     timeoutMs = 25_000,
@@ -176,7 +181,20 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult | nul
     modelOverrides,
     stripThinkingTags: shouldStrip = true,
     validate,
+    systemAppend,
   } = opts;
+
+  let messages = rawMessages;
+  const firstMsg = messages[0];
+  if (systemAppend && firstMsg && firstMsg.role === 'system') {
+    const sanitized = sanitizeForPrompt(systemAppend);
+    if (sanitized) {
+      messages = [
+        { role: 'system', content: `${firstMsg.content}\n\n---\n\n${sanitized}` },
+        ...messages.slice(1),
+      ];
+    }
+  }
 
   const providers = resolveProviderChain({ forcedProvider, providerOrder });
 
@@ -236,6 +254,9 @@ export async function callLlm(opts: LlmCallOptions): Promise<LlmCallResult | nul
           continue;
         }
       }
+
+      // Strip markdown code fences (e.g. ```json ... ```) that some models add
+      content = content.replace(/^```(?:\w+)?\s*/m, '').replace(/\s*```\s*$/m, '').trim();
 
       if (validate && !validate(content)) {
         console.warn(`[llm:${providerName}] validate() rejected response, trying next`);

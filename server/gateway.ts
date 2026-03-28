@@ -104,7 +104,6 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/giving/v1/get-giving-summary': 'static',
   '/api/intelligence/v1/get-country-intel-brief': 'static',
   '/api/intelligence/v1/get-gdelt-topic-timeline': 'medium',
-  '/api/intelligence/v1/list-market-implications': 'static',
   '/api/climate/v1/list-climate-anomalies': 'static',
   '/api/sanctions/v1/list-sanctions-pressure': 'static',
   '/api/sanctions/v1/lookup-sanction-entity': 'no-store',
@@ -112,6 +111,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/thermal/v1/list-thermal-escalations': 'slow',
   '/api/research/v1/list-tech-events': 'static',
   '/api/military/v1/get-usni-fleet-report': 'static',
+  '/api/military/v1/list-defense-patents': 'daily',
   '/api/conflict/v1/list-ucdp-events': 'static',
   '/api/conflict/v1/get-humanitarian-summary': 'static',
   '/api/conflict/v1/list-iran-events': 'slow',
@@ -131,6 +131,9 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/economic/v1/list-grocery-basket-prices': 'static',
   '/api/economic/v1/list-bigmac-prices': 'static',
   '/api/economic/v1/list-fuel-prices': 'static',
+  '/api/economic/v1/get-crude-inventories': 'static',
+  '/api/economic/v1/get-nat-gas-storage': 'static',
+  '/api/economic/v1/get-eu-yield-curve': 'daily',
   '/api/supply-chain/v1/get-critical-minerals': 'daily',
   '/api/military/v1/get-aircraft-details': 'static',
   '/api/military/v1/get-wingbits-status': 'static',
@@ -183,16 +186,21 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/consumer-prices/v1/get-consumer-price-freshness': 'slow',
 
   '/api/aviation/v1/get-youtube-live-stream-info': 'fast',
+
+  '/api/market/v1/list-earnings-calendar': 'slow',
+  '/api/market/v1/get-cot-positioning': 'slow',
+  '/api/economic/v1/get-economic-calendar': 'slow',
+  '/api/intelligence/v1/list-market-implications': 'slow',
+  '/api/economic/v1/get-ecb-fx-rates': 'slow',
+  '/api/economic/v1/get-eurostat-country-data': 'slow',
+  '/api/economic/v1/get-eu-gas-storage': 'slow',
+  '/api/economic/v1/get-eu-fsi': 'slow',
+  '/api/supply-chain/v1/get-shipping-stress': 'medium',
+  '/api/health/v1/list-disease-outbreaks': 'slow',
+  '/api/intelligence/v1/get-social-velocity': 'fast',
 };
 
-// TODO(payment-pr): PREMIUM_RPC_PATHS is intentionally empty until the payment/pro-user
-// system is implemented. The original set of stock analysis paths used forceKey=true,
-// which broke web pro users because isTrustedBrowserOrigin() is header-only (Origin can be
-// spoofed) and the web client has no mechanism to forward a server-validated entitlement.
-// When the payment PR lands, re-populate this set and have the web client send a
-// server-validated pro token (e.g. X-WorldMonitor-Key) so the entitlement check is
-// meaningful. Until then, access is gated client-side by isProUser() + WORLDMONITOR_API_KEY.
-const PREMIUM_RPC_PATHS = new Set<string>();
+import { PREMIUM_RPC_PATHS } from '../src/shared/premium-paths';
 
 /**
  * Creates a Vercel Edge handler for a single domain's routes.
@@ -230,15 +238,41 @@ export function createDomainGateway(
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // API key validation (origin-aware)
+    // API key validation
     const keyCheck = validateApiKey(request, {
       forceKey: PREMIUM_RPC_PATHS.has(pathname),
     });
     if (keyCheck.required && !keyCheck.valid) {
-      return new Response(JSON.stringify({ error: keyCheck.error }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json', ...corsHeaders },
-      });
+      if (PREMIUM_RPC_PATHS.has(pathname)) {
+        const authHeader = request.headers.get('Authorization');
+        if (authHeader?.startsWith('Bearer ')) {
+          const { validateBearerToken } = await import('./auth-session');
+          const session = await validateBearerToken(authHeader.slice(7));
+          if (!session.valid) {
+            return new Response(JSON.stringify({ error: 'Invalid or expired session' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', ...corsHeaders },
+            });
+          }
+          if (session.role !== 'pro') {
+            return new Response(JSON.stringify({ error: 'Pro subscription required' }), {
+              status: 403,
+              headers: { 'Content-Type': 'application/json', ...corsHeaders },
+            });
+          }
+          // Valid pro session — fall through to route handling
+        } else {
+          return new Response(JSON.stringify({ error: keyCheck.error, _debug: (keyCheck as any)._debug }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
+      } else {
+        return new Response(JSON.stringify({ error: keyCheck.error }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
     }
 
     // IP-based rate limiting — two-phase: endpoint-specific first, then global fallback

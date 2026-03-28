@@ -105,6 +105,7 @@ export interface EventClassification {
 
 export interface GetCountryIntelBriefRequest {
   countryCode: string;
+  framework: string;
 }
 
 export interface GetCountryIntelBriefResponse {
@@ -142,6 +143,7 @@ export interface GdeltArticle {
 export interface DeductSituationRequest {
   query: string;
   geoContext: string;
+  framework: string;
 }
 
 export interface DeductSituationResponse {
@@ -417,6 +419,7 @@ export interface CrossSourceSignal {
 }
 
 export interface ListMarketImplicationsRequest {
+  frameworkId: string;
 }
 
 export interface ListMarketImplicationsResponse {
@@ -436,6 +439,26 @@ export interface MarketImplicationCard {
   narrative: string;
   riskCaveat: string;
   driver: string;
+}
+
+export interface GetSocialVelocityRequest {
+}
+
+export interface GetSocialVelocityResponse {
+  posts: SocialVelocityPost[];
+  fetchedAt: number;
+}
+
+export interface SocialVelocityPost {
+  id: string;
+  title: string;
+  subreddit: string;
+  url: string;
+  score: number;
+  upvoteRatio: number;
+  numComments: number;
+  velocityScore: number;
+  createdAt: number;
 }
 
 export type SeverityLevel = "SEVERITY_LEVEL_UNSPECIFIED" | "SEVERITY_LEVEL_LOW" | "SEVERITY_LEVEL_MEDIUM" | "SEVERITY_LEVEL_HIGH";
@@ -514,6 +537,7 @@ export interface IntelligenceServiceHandler {
   getGdeltTopicTimeline(ctx: ServerContext, req: GetGdeltTopicTimelineRequest): Promise<GetGdeltTopicTimelineResponse>;
   listCrossSourceSignals(ctx: ServerContext, req: ListCrossSourceSignalsRequest): Promise<ListCrossSourceSignalsResponse>;
   listMarketImplications(ctx: ServerContext, req: ListMarketImplicationsRequest): Promise<ListMarketImplicationsResponse>;
+  getSocialVelocity(ctx: ServerContext, req: GetSocialVelocityRequest): Promise<GetSocialVelocityResponse>;
 }
 
 export function createIntelligenceServiceRoutes(
@@ -675,6 +699,7 @@ export function createIntelligenceServiceRoutes(
           const params = url.searchParams;
           const body: GetCountryIntelBriefRequest = {
             countryCode: params.get("country_code") ?? "",
+            framework: params.get("framework") ?? "",
           };
           if (options?.validateRequest) {
             const bodyViolations = options.validateRequest("getCountryIntelBrief", body);
@@ -1266,7 +1291,17 @@ export function createIntelligenceServiceRoutes(
       handler: async (req: Request): Promise<Response> => {
         try {
           const pathParams: Record<string, string> = {};
-          const body = {} as ListMarketImplicationsRequest;
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: ListMarketImplicationsRequest = {
+            frameworkId: params.get("frameworkId") ?? "",
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("listMarketImplications", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
 
           const ctx: ServerContext = {
             request: req,
@@ -1276,6 +1311,43 @@ export function createIntelligenceServiceRoutes(
 
           const result = await handler.listMarketImplications(ctx, body);
           return new Response(JSON.stringify(result as ListMarketImplicationsResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/intelligence/v1/get-social-velocity",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const body = {} as GetSocialVelocityRequest;
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getSocialVelocity(ctx, body);
+          return new Response(JSON.stringify(result as GetSocialVelocityResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });

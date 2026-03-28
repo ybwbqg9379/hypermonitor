@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -298,6 +299,44 @@ export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ─── Proxy helpers for sources that block Railway container IPs ───
+// Supports PROXY_URL="host:port:user:pass" (Decodo) or OREF_PROXY_AUTH="user:pass@host:port" (Froxy).
+
+export function resolveProxy() {
+  const raw = process.env.PROXY_URL || '';
+  if (raw) {
+    const parts = raw.split(':');
+    if (parts.length === 4) {
+      const [host, port, user, pass] = parts;
+      return `${user}:${pass}@${host.replace(/^gate\./, 'us.')}:${port}`;
+    }
+    return raw;
+  }
+  return process.env.OREF_PROXY_AUTH || '';
+}
+
+// curl-based fetch; throws on non-2xx. Returns response body as string.
+export function curlFetch(url, proxyAuth, headers = {}) {
+  const args = ['-sS', '--compressed', '--max-time', '15', '-L'];
+  if (proxyAuth) args.push('-x', `http://${proxyAuth}`);
+  for (const [k, v] of Object.entries(headers)) args.push('-H', `${k}: ${v}`);
+  args.push('-w', '\n%{http_code}');
+  args.push(url);
+  const raw = execFileSync('curl', args, { encoding: 'utf8', timeout: 20000, stdio: ['pipe', 'pipe', 'pipe'] });
+  const nl = raw.lastIndexOf('\n');
+  const status = parseInt(raw.slice(nl + 1).trim(), 10);
+  if (status < 200 || status >= 300) throw Object.assign(new Error(`HTTP ${status}`), { status });
+  return raw.slice(0, nl);
+}
+
+// Fetch JSON from a FRED URL, routing through proxy when available.
+export async function fredFetchJson(url, proxyAuth) {
+  if (proxyAuth) return JSON.parse(curlFetch(url, proxyAuth, { Accept: 'application/json' }));
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // Learned Routes — persist successful scrape URLs across seed runs
 // ---------------------------------------------------------------------------
@@ -582,7 +621,10 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
       const keys = [canonicalKey, `seed-meta:${domain}:${resource}`];
       if (extraKeys) keys.push(...extraKeys.map(ek => ek.key));
       await extendExistingTtl(keys, ttlSeconds || 600);
-      console.log(`  SKIPPED: validation failed (empty data) — extended existing cache TTL`);
+      // Always write seed-meta even when data is empty so health checks can
+      // distinguish "seeder ran but nothing to publish" from "seeder stopped".
+      await writeFreshnessMetadata(domain, resource, 0, opts.sourceVersion);
+      console.log(`  SKIPPED: validation failed (empty data) — seed-meta refreshed, existing cache TTL extended`);
       console.log(`\n=== Done (${Math.round(durationMs)}ms, no write) ===`);
       await releaseLock(`${domain}:${resource}`, runId);
       process.exit(0);

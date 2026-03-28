@@ -41,7 +41,7 @@ const FEAR_GREED_TTL = 64800; // 18h = 3x 6h interval
 const FRED_PREFIX = 'economic:fred:v1';
 
 // --- Yahoo Finance fetching (15 symbols, 150ms gaps) ---
-const YAHOO_SYMBOLS = ['^GSPC','^VIX','^VIX9D','^VIX3M','^SKEW','GLD','TLT','SPY','RSP','DX-Y.NYB','XLK','XLF','XLE','XLV','XLY','XLP','XLI','XLB','XLU','XLRE','XLC'];
+const YAHOO_SYMBOLS = ['^GSPC','^VIX','^VIX9D','^VIX3M','^SKEW','GLD','TLT','HYG','SPY','RSP','DX-Y.NYB','XLK','XLF','XLE','XLV','XLY','XLP','XLI','XLB','XLU','XLRE','XLC'];
 
 async function fetchYahooSymbol(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1y`;
@@ -126,7 +126,9 @@ async function fetchCNN() {
     if (!resp.ok) { console.warn(`  CNN F&G: HTTP ${resp.status}`); return null; }
     const data = await resp.json();
     const score = data?.score ?? data?.fear_and_greed?.score;
-    const rating = data?.rating ?? data?.fear_and_greed?.rating;
+    const rawRating = data?.rating ?? data?.fear_and_greed?.rating;
+    const VALID_CNN_LABELS = new Set(['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed']);
+    const rating = (typeof rawRating === 'string' && VALID_CNN_LABELS.has(rawRating)) ? rawRating : null;
     return score != null ? { score: Math.round(score), label: rating ?? labelFromScore(Math.round(score)) } : null;
   } catch (e) { console.warn(`  CNN F&G: ${e.message}`); return null; }
 }
@@ -410,7 +412,7 @@ async function fetchAll() {
   const vix9d = yahoo['^VIX9D'];
   const vix3m = yahoo['^VIX3M'];
   const skew = yahoo['^SKEW'];
-  const gld = yahoo['GLD'], tlt = yahoo['TLT'], spy = yahoo['SPY'], rsp = yahoo['RSP'];
+  const gld = yahoo['GLD'], tlt = yahoo['TLT'], hyg = yahoo['HYG'], spy = yahoo['SPY'], rsp = yahoo['RSP'];
   const dxy = yahoo['DX-Y.NYB'];
   const xlk = yahoo['XLK'], xlf = yahoo['XLF'], xle = yahoo['XLE'], xlv = yahoo['XLV'];
   const xly = yahoo['XLY'], xlp = yahoo['XLP'], xli = yahoo['XLI'], xlb = yahoo['XLB'];
@@ -450,6 +452,27 @@ async function fetchAll() {
   const fedRateStr = fedRate != null ? `${fedRate.toFixed(2)}%` : null;
   const hySpreadVal = fredLatest(hyObs);
 
+  const hygPrice = hyg?.price ?? null;
+  const tltPrice = tlt?.price ?? null;
+  let fsiValue = null;
+  let fsiLabel = 'Unknown';
+  if (hygPrice != null && tltPrice != null && tltPrice > 0 && vixLive != null && vixLive > 0 && hySpreadVal != null && hySpreadVal > 0) {
+    fsiValue = Math.round(((hygPrice / tltPrice) / (vixLive * hySpreadVal / 100)) * 10000) / 10000;
+    if (fsiValue >= 1.5) fsiLabel = 'Low Stress';
+    else if (fsiValue >= 0.8) fsiLabel = 'Moderate Stress';
+    else if (fsiValue >= 0.3) fsiLabel = 'Elevated Stress';
+    else fsiLabel = 'High Stress';
+  }
+
+  const SECTOR_ETF_NAMES = { XLK: 'Technology', XLF: 'Financials', XLE: 'Energy', XLV: 'Health Care', XLY: 'Consumer Discr.', XLP: 'Consumer Staples', XLI: 'Industrials', XLB: 'Materials', XLU: 'Utilities', XLRE: 'Real Estate', XLC: 'Comm. Services' };
+  const sectorPerformance = Object.entries(SECTOR_ETF_NAMES).map(([sym, name]) => {
+    const d = yahoo[sym];
+    if (!d?.closes || d.closes.length < 2) return null;
+    const prev = d.closes.at(-2), curr = d.closes.at(-1);
+    const change1d = (prev && prev > 0) ? Math.round(((curr - prev) / prev) * 10000) / 100 : null;
+    return change1d != null ? { symbol: sym, name, change1d } : null;
+  }).filter(Boolean);
+
   const payload = {
     timestamp: new Date().toISOString(),
     composite: { score: compositeScore, label: compositeLabel, previous: previousScore },
@@ -475,7 +498,9 @@ async function fetchAll() {
       pctAbove200d: pctAbove200d != null ? { value: pctAbove200d } : null,
       yield10y: fredLatest(dgs10Obs) != null ? { value: fredLatest(dgs10Obs) } : null,
       fedRate:  fedRateStr ? { value: fedRateStr } : null,
+      fsi:      fsiValue != null ? { value: fsiValue, label: fsiLabel, hygPrice, tltPrice } : null,
     },
+    sectorPerformance,
     unavailable: false,
   };
 

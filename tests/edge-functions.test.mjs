@@ -15,9 +15,12 @@ const edgeFunctions = readdirSync(apiDir)
   .filter((f) => f.endsWith('.js') && !f.startsWith('_'))
   .map((f) => ({ name: f, path: join(apiDir, f) }));
 
-// ALL .js files in api/ (including helpers) — used for node: built-in checks
+// ALL .js AND .ts files in api/ root — used for node: built-in checks.
+// Note: .ts edge functions (e.g. widget-agent.ts) are intentionally excluded from the
+// module-isolation describe below because Vercel bundles them at build time, so
+// imports from '../server/' are valid. The node: built-in check still applies.
 const allApiFiles = readdirSync(apiDir)
-  .filter((f) => f.endsWith('.js'))
+  .filter((f) => (f.endsWith('.js') || f.endsWith('.ts')) && !f.startsWith('_'))
   .map((f) => ({ name: f, path: join(apiDir, f) }));
 
 describe('scripts/shared/ stays in sync with shared/', () => {

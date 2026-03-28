@@ -133,6 +133,7 @@ export const COMMANDS: Command[] = [
   { id: 'panel:insights', keywords: ['insights', 'ai insights', 'analysis'], label: 'Panel: AI Insights', icon: '\u{1F4A1}', category: 'panels' },
   { id: 'panel:strategic-posture', keywords: ['strategic posture', 'ai posture', 'posture assessment'], label: 'Panel: AI Strategic Posture', icon: '\u{1F3AF}', category: 'panels' },
   { id: 'panel:forecast', keywords: ['forecast', 'ai forecast', 'predictions ai'], label: 'Panel: AI Forecasts', icon: '\u{1F52E}', category: 'panels' },
+  { id: 'panel:deduction', keywords: ['deduct', 'deduction', 'ai deduction', 'situation analysis', 'scenario analysis'], label: 'Panel: AI Deduction', icon: '\u{1F9E0}', category: 'panels' },
   { id: 'panel:military-correlation', keywords: ['force posture', 'military correlation', 'military posture'], label: 'Panel: Force Posture', icon: '\u{1F396}\uFE0F', category: 'panels' },
   { id: 'panel:escalation-correlation', keywords: ['escalation', 'escalation monitor', 'escalation risk'], label: 'Panel: Escalation Monitor', icon: '\u{1F4C8}', category: 'panels' },
   { id: 'panel:economic-correlation', keywords: ['economic warfare', 'economic correlation', 'sanctions impact'], label: 'Economic Warfare', icon: '\u{1F4B1}', category: 'panels' },
@@ -162,6 +163,15 @@ export const COMMANDS: Command[] = [
   { id: 'panel:bigmac', keywords: ['bigmac', 'big mac', 'big mac index', 'purchasing power parity', 'ppp'], label: 'Panel: Big Mac Index', icon: '\u{1F354}', category: 'panels' },
   { id: 'panel:fuel-prices', keywords: ['fuel prices', 'gas prices', 'gasoline', 'diesel', 'petrol', 'fuel cost', 'pump prices'], label: 'Panel: Fuel Prices', icon: '\u26FD', category: 'panels' },
   { id: 'panel:national-debt', keywords: ['national debt', 'debt clock', 'government debt', 'deficit'], label: 'Panel: National Debt Clock', icon: '\u{1F4B8}', category: 'panels' },
+  { id: 'panel:fsi', keywords: ['fsi', 'financial stress', 'financial stress indicator', 'systemic risk'], label: 'Panel: Financial Stress Indicator', icon: '\u{1F4C9}', category: 'panels' },
+  { id: 'panel:yield-curve', keywords: ['yield curve', 'rates', 'treasury', 'ecb rates', 'bond yield', 'inversion'], label: 'Panel: Yield Curve & Rates', icon: '\u{1F4C8}', category: 'panels' },
+  { id: 'panel:earnings-calendar', keywords: ['earnings', 'earnings calendar', 'eps', 'quarterly results'], label: 'Panel: Earnings Calendar', icon: '\u{1F4C5}', category: 'panels' },
+  { id: 'panel:economic-calendar', keywords: ['economic calendar', 'macro events', 'nonfarm payrolls', 'gdp release', 'fomc'], label: 'Panel: Economic Calendar', icon: '\u{1F4C6}', category: 'panels' },
+  { id: 'panel:cot-positioning', keywords: ['cot', 'cot positioning', 'commitments of traders', 'futures positioning', 'cftc'], label: 'Panel: CFTC COT Positioning', icon: '\u{1F4CA}', category: 'panels' },
+  { id: 'panel:macro-tiles', keywords: ['macro tiles', 'macro indicators', 'macro overview'], label: 'Panel: Macro Indicators', icon: '\u{1F9E9}', category: 'panels' },
+  { id: 'panel:defense-patents', keywords: ['defense patents', 'r&d signal', 'military research', 'defense r&d'], label: 'Panel: R&D Signal', icon: '\u{1F9EA}', category: 'panels' },
+  { id: 'panel:disease-outbreaks', keywords: ['disease outbreaks', 'outbreaks', 'who alerts', 'epidemic', 'health alerts', 'promed'], label: 'Panel: Disease Outbreaks', icon: '\u{1F9A0}', category: 'panels' },
+  { id: 'panel:social-velocity', keywords: ['social velocity', 'reddit trending', 'social signals', 'viral', 'trending posts'], label: 'Panel: Social Velocity', icon: '\u{1F4F1}', category: 'panels' },
 
   // Crypto panels
   { id: 'panel:crypto-heatmap', keywords: ['crypto sectors', 'crypto heatmap', 'altcoin sectors'], label: 'Panel: Crypto Sectors', icon: '\u{1F7E9}', category: 'panels' },

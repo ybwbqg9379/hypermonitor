@@ -30,12 +30,46 @@ export interface DailyMarketBrief {
   headlineCount: number;
 }
 
+export interface RegimeMacroContext {
+  compositeScore: number;
+  compositeLabel: string;
+  fsiValue: number;
+  fsiLabel: string;
+  vix: number;
+  hySpread: number;
+  cnnFearGreed: number;
+  cnnLabel: string;
+  momentum?: { score: number };
+  sentiment?: { score: number };
+}
+
+export interface YieldCurveContext {
+  inverted: boolean;
+  spread2s10s: number;
+  rate2y: number;
+  rate10y: number;
+  rate30y: number;
+}
+
+export interface SectorBriefContext {
+  topName: string;
+  topChange: number;
+  worstName: string;
+  worstChange: number;
+  countPositive: number;
+  total: number;
+}
+
 export interface BuildDailyMarketBriefOptions {
   markets: MarketData[];
   newsByCategory: Record<string, NewsItem[]>;
   timezone?: string;
   now?: Date;
   targets?: MarketWatchlistEntry[];
+  regimeContext?: RegimeMacroContext;
+  yieldCurveContext?: YieldCurveContext;
+  sectorContext?: SectorBriefContext;
+  frameworkAppend?: string;
   summarize?: (
     headlines: string[],
     onProgress?: undefined,
@@ -273,6 +307,47 @@ function buildSummaryInputs(items: DailyMarketBriefItem[], headlines: NewsItem[]
   return { headlines: headlineLines, marketContext };
 }
 
+function buildExtendedMarketContext(
+  baseContext: string,
+  regime?: RegimeMacroContext,
+  yieldCurve?: YieldCurveContext,
+  sector?: SectorBriefContext,
+): string {
+  const parts: string[] = [`Markets: ${baseContext}`];
+
+  if (regime && regime.compositeScore > 0) {
+    const lines = [
+      `Fear & Greed: ${regime.compositeScore.toFixed(0)} (${regime.compositeLabel})`,
+    ];
+    if (regime.fsiValue > 0) lines.push(`FSI: ${regime.fsiValue.toFixed(2)} (${regime.fsiLabel})`);
+    if (regime.vix > 0) lines.push(`VIX: ${regime.vix.toFixed(1)}`);
+    if (regime.hySpread > 0) lines.push(`HY Spread: ${regime.hySpread.toFixed(0)}bps`);
+    if (regime.cnnFearGreed > 0) lines.push(`CNN F&G: ${regime.cnnFearGreed.toFixed(0)} (${regime.cnnLabel})`);
+    if (regime.momentum) lines.push(`Momentum: ${regime.momentum.score.toFixed(0)}/100`);
+    if (regime.sentiment) lines.push(`Sentiment: ${regime.sentiment.score.toFixed(0)}/100`);
+    parts.push(`Market Stress Indicators:\n${lines.join('\n')}`);
+  }
+
+  if (yieldCurve && yieldCurve.rate10y > 0) {
+    const spreadStr = (yieldCurve.spread2s10s >= 0 ? '+' : '') + yieldCurve.spread2s10s.toFixed(0);
+    parts.push([
+      `Yield Curve: ${yieldCurve.inverted ? 'INVERTED' : 'NORMAL'} (2s/10s ${spreadStr}bps)`,
+      `2Y: ${yieldCurve.rate2y.toFixed(2)}%  10Y: ${yieldCurve.rate10y.toFixed(2)}%  30Y: ${yieldCurve.rate30y.toFixed(2)}%`,
+    ].join('\n'));
+  }
+
+  if (sector && sector.total > 0) {
+    const topSign = sector.topChange >= 0 ? '+' : '';
+    const worstSign = sector.worstChange >= 0 ? '+' : '';
+    parts.push([
+      `Sectors: ${sector.countPositive}/${sector.total} positive`,
+      `Top: ${sector.topName} ${topSign}${sector.topChange.toFixed(1)}%  Worst: ${sector.worstName} ${worstSign}${sector.worstChange.toFixed(1)}%`,
+    ].join('\n'));
+  }
+
+  return parts.join('\n\n');
+}
+
 export function shouldRefreshDailyBrief(
   brief: DailyMarketBrief | null | undefined,
   timezone = 'UTC',
@@ -337,6 +412,10 @@ export async function buildDailyMarketBrief(options: BuildDailyMarketBriefOption
   }
 
   const { headlines: summaryHeadlines, marketContext } = buildSummaryInputs(items, relevantHeadlines);
+  let extendedContext = buildExtendedMarketContext(marketContext, options.regimeContext, options.yieldCurveContext, options.sectorContext);
+  if (options.frameworkAppend) {
+    extendedContext = `${extendedContext}\n\n---\nAnalytical Framework:\n${options.frameworkAppend}`;
+  }
   let summary = buildRuleSummary(items, relevantHeadlines.length);
   let provider = 'rules';
   let model = '';
@@ -348,7 +427,7 @@ export async function buildDailyMarketBrief(options: BuildDailyMarketBriefOption
       const generated = await summaryProvider(
         summaryHeadlines,
         undefined,
-        `Market context: ${marketContext}`,
+        extendedContext,
         'en',
       );
       if (generated?.summary) {

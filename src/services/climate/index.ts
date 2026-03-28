@@ -40,7 +40,7 @@ export interface ClimateFetchResult {
 }
 
 const client = new ClimateServiceClient(getRpcBaseUrl(), { fetch: (...args) => globalThis.fetch(...args) });
-const breaker = createCircuitBreaker<ListClimateAnomaliesResponse>({ name: 'Climate Anomalies', cacheTtlMs: 10 * 60 * 1000, persistCache: true });
+const breaker = createCircuitBreaker<ListClimateAnomaliesResponse>({ name: 'Climate Anomalies', cacheTtlMs: 20 * 60 * 1000, persistCache: true });
 
 const emptyClimateFallback: ListClimateAnomaliesResponse = { anomalies: [] };
 

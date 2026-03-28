@@ -14,6 +14,9 @@ import { deletePersistentCache, getPersistentCache, setPersistentCache } from '@
 import { t } from '@/services/i18n';
 import { isDesktopRuntime } from '@/services/runtime';
 import { getAiFlowSettings, isAnyAiProviderEnabled, subscribeAiFlowChange } from '@/services/ai-flow-settings';
+import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services/analysis-framework-store';
+import { hasPremiumAccess } from '@/services/panel-gating';
+import { FrameworkSelector } from './FrameworkSelector';
 import { getServerInsights, type ServerInsights, type ServerInsightStory } from '@/services/insights-loader';
 import type { ClusteredEvent, FocalPoint, MilitaryFlight } from '@/types';
 
@@ -26,6 +29,8 @@ export class InsightsPanel extends Panel {
   private lastMilitaryFlights: MilitaryFlight[] = [];
   private lastClusters: ClusteredEvent[] = [];
   private aiFlowUnsubscribe: (() => void) | null = null;
+  private frameworkUnsubscribe: (() => void) | null = null;
+  private fwSelector: FrameworkSelector | null = null;
   private updateGeneration = 0;
   private static readonly BRIEF_COOLDOWN_MS = 120000; // 2 min cooldown (API has limits)
   private static readonly BRIEF_CACHE_KEY = 'summary:world-brief';
@@ -46,6 +51,13 @@ export class InsightsPanel extends Panel {
         void this.onAiFlowChanged();
       });
     }
+
+    this.frameworkUnsubscribe = subscribeFrameworkChange('insights', () => {
+      void this.updateInsights(this.lastClusters);
+    });
+
+    this.fwSelector = new FrameworkSelector({ panelId: 'insights', isPremium: hasPremiumAccess(), panel: this, note: 'Applies to client-generated analysis only' });
+    this.header.appendChild(this.fwSelector.el);
   }
 
   public setMilitaryFlights(flights: MilitaryFlight[]): void {
@@ -444,9 +456,13 @@ export class InsightsPanel extends Panel {
         // Pass focal point context + theater posture to AI for correlation-aware summarization
         // Tech variant: no geopolitical context, just tech news summarization
         const theaterContext = SITE_VARIANT === 'full' ? this.getTheaterPostureContext() : '';
-        const geoContext = SITE_VARIANT === 'full'
+        let geoContext = SITE_VARIANT === 'full'
           ? (focalSummary.aiContext || signalSummary.aiContext) + theaterContext
           : '';
+        const insightsFw = getActiveFrameworkForPanel('insights');
+        if (insightsFw) {
+          geoContext = `${geoContext}\n\n---\nAnalytical Framework:\n${insightsFw.systemPromptAppend}`;
+        }
         const result = await generateSummary(titles, (_step, _total, msg) => {
           // Show sub-progress for summarization
           this.setProgress(3, totalSteps, `Generating brief: ${msg}`);
@@ -855,6 +871,8 @@ export class InsightsPanel extends Panel {
 
   public override destroy(): void {
     this.aiFlowUnsubscribe?.();
+    this.frameworkUnsubscribe?.();
+    this.fwSelector?.destroy();
     super.destroy();
   }
 }

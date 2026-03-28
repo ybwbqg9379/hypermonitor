@@ -3,6 +3,8 @@ import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
 import { describeFreshness } from '@/services/persistent-cache';
 import type { MarketImplicationCard, MarketImplicationsData } from '@/services/market-implications';
+import { FrameworkSelector } from './FrameworkSelector';
+import { hasPremiumAccess } from '@/services/panel-gating';
 
 const DISCLAIMER = 'AI-generated trade signals for informational purposes only. Not investment advice. Always do your own research.';
 
@@ -46,6 +48,8 @@ function renderCard(card: MarketImplicationCard): string {
 }
 
 export class MarketImplicationsPanel extends Panel {
+  private fwSelector: FrameworkSelector;
+
   constructor() {
     super({
       id: 'market-implications',
@@ -53,6 +57,13 @@ export class MarketImplicationsPanel extends Panel {
       infoTooltip: t('components.marketImplications.infoTooltip'),
       premium: 'locked',
     });
+    this.fwSelector = new FrameworkSelector({ panelId: 'market-implications', isPremium: hasPremiumAccess(), panel: this, note: 'Applies to next AI regeneration' });
+    this.header.appendChild(this.fwSelector.el);
+  }
+
+  override destroy(): void {
+    this.fwSelector.destroy();
+    super.destroy();
   }
 
   public renderImplications(data: MarketImplicationsData, source: 'live' | 'cached' = 'live'): void {
@@ -67,9 +78,6 @@ export class MarketImplicationsPanel extends Panel {
 
     const html = `
       <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-          LLM-generated trade signals derived from live geopolitical, commodity, and market state. Updated each forecast cycle.
-        </div>
         ${data.cards.map(renderCard).join('')}
         <div style="font-size:10px;color:var(--text-dim);padding:8px;border-top:1px solid var(--border);line-height:1.5;text-align:center">${escapeHtml(DISCLAIMER)}</div>
       </div>
