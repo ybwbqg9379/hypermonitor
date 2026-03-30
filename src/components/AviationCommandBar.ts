@@ -1,5 +1,6 @@
-import { fetchFlightStatus, fetchAirportOpsSummary, fetchFlightPrices, fetchAviationNews } from '@/services/aviation';
+import { fetchFlightStatus, fetchAirportOpsSummary, fetchFlightPrices, fetchAviationNews, fetchGoogleFlights } from '@/services/aviation';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
+import { MONITORED_AIRPORTS } from '@/config/airports';
 
 // ---- Intent types ----
 
@@ -11,33 +12,76 @@ type Intent =
     | { type: 'TRACK'; callsign?: string; icao24?: string }
     | { type: 'UNKNOWN'; raw: string };
 
+function fmtDur(m: number): string {
+    if (!m) return '';
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return min > 0 ? `${h}h ${min}m` : `${h}h`;
+}
+
+// ---- Airport resolver (IATA or city/name fuzzy match) ----
+
+function resolveIata(token: string): string | undefined {
+    const up = token.toUpperCase();
+    if (/^[A-Z]{3}$/.test(up)) return up;
+    const low = token.toLowerCase();
+    const cityMatch = MONITORED_AIRPORTS.find(a => a.city.toLowerCase() === low);
+    if (cityMatch) return cityMatch.iata;
+    // Whole-word name match — only if the token uniquely identifies one airport
+    // (prevents common words like "John", "International" matching multiple airports)
+    const nameMatches = MONITORED_AIRPORTS.filter(a =>
+        a.name.toLowerCase().split(/[\s\-–./]+/).includes(low)
+    );
+    if (nameMatches.length === 1) return nameMatches[0]!.iata;
+    return undefined;
+}
+
+function extractAirports(words: string[]): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    let i = 0;
+    while (i < words.length) {
+        if (i + 1 < words.length) {
+            const two = `${words[i]} ${words[i + 1]}`;
+            const m = MONITORED_AIRPORTS.find(a => a.city.toLowerCase() === two.toLowerCase());
+            if (m) { if (!seen.has(m.iata)) { result.push(m.iata); seen.add(m.iata); } i += 2; continue; }
+        }
+        const iata = resolveIata(words[i]!);
+        if (iata && !seen.has(iata)) { result.push(iata); seen.add(iata); }
+        else if (iata) seen.add(iata); // consume the token even if already seen
+        i++;
+    }
+    return result;
+}
+
 // ---- Intent parser ----
 
 function parseIntent(raw: string): Intent {
     const q = raw.trim().toUpperCase();
     const words = q.split(/\s+/);
 
-    // OPS <AIRPORT...>
-    if (/^OPS\s/.test(q) || /^STATUS\s/.test(q)) {
-        const airports = words.slice(1).filter(w => /^[A-Z]{3}$/.test(w));
+    // OPS <AIRPORT | city name ...>
+    if (/^OPS\b/.test(q) || /^STATUS\s/.test(q)) {
+        const airports = extractAirports(words.slice(1));
         if (airports.length) return { type: 'OPS', airports };
     }
 
-    // FLIGHT <IATA-FLIGHT>
-    if (/^(FLIGHT|FLT|STATUS)\s+[A-Z]{2}\d{1,4}/.test(q)) {
-        const match = q.match(/[A-Z]{2}\d{1,4}/);
+    // FLIGHT <IATA-FLIGHT> or <IATA-FLIGHT> [STATUS|FLIGHT|FLT]
+    if (/^(FLIGHT|FLT)\s+[A-Z]{2,3}\d{1,4}/.test(q) || /[A-Z]{2,3}\d{1,4}\s+(STATUS|FLIGHT|FLT)/.test(q) || /^STATUS\s+[A-Z]{2,3}\d{1,4}/.test(q)) {
+        const match = q.match(/[A-Z]{2,3}\d{1,4}/);
         if (match) {
             const origin = words.find(w => /^[A-Z]{3}$/.test(w) && w !== match[0]);
             return { type: 'FLIGHT_STATUS', flightNumber: match[0], origin };
         }
     }
 
-    // PRICE / PRICES <ORG> <DST>
-    if (/^PRICE[S]?\s+[A-Z]{3}\s+[A-Z]{3}/.test(q)) {
-        const airports = words.slice(1).filter(w => /^[A-Z]{3}$/.test(w));
-        if (airports.length >= 2) {
-            const date = words.find(w => /^\d{4}-\d{2}-\d{2}$/.test(w));
-            return { type: 'PRICE_WATCH', origin: airports[0]!, destination: airports[1]!, date };
+    // PRICE / PRICES <ORG> <DST>  or  <ORG> TO <DST> PRICE[S]  (supports city names)
+    if (words.some(w => /^PRICE[S]?$/.test(w))) {
+        const nonKeywords = words.filter(w => !/^(PRICE[S]?|TO|FROM|ON|FOR)$/.test(w) && !/^\d{4}-\d{2}-\d{2}$/.test(w));
+        const priceAirports = extractAirports(nonKeywords);
+        if (priceAirports.length >= 2) {
+            const date = raw.match(/\b(\d{4}-\d{2}-\d{2})\b/)?.[1];
+            return { type: 'PRICE_WATCH', origin: priceAirports[0]!, destination: priceAirports[1]!, date };
         }
     }
 
@@ -79,28 +123,77 @@ async function executeIntent(intent: Intent): Promise<CommandResult> {
         const flights = await fetchFlightStatus(intent.flightNumber, undefined, intent.origin);
         if (!flights.length) return { html: `<div class="cmd-empty">No results for ${escapeHtml(intent.flightNumber)}.</div>` };
         const f = flights[0]!;
-        const timeStr = f.estimatedDeparture
+        const depStr = f.estimatedDeparture
             ? `Dep ${f.estimatedDeparture.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`
+            : '';
+        const arrStr = f.estimatedArrival
+            ? ` · Arr ${f.estimatedArrival.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`
+            : '';
+        const carrierLabel = f.carrier.name || f.carrier.iata;
+        const gateLine = (f.gate || f.terminal)
+            ? `<div style="color:#9ca3af;font-size:11px">Gate ${escapeHtml(f.gate || '—')}${f.terminal ? ` · Terminal ${escapeHtml(f.terminal)}` : ''}</div>`
+            : '';
+        const acLine = f.aircraftType
+            ? `<div style="color:#9ca3af;font-size:11px">${escapeHtml(f.aircraftType)}</div>`
             : '';
         return {
             html: `<div class="cmd-section">
-      <strong>✈️ ${escapeHtml(f.flightNumber)}</strong>
-      <div>${escapeHtml(f.origin.iata)} → ${escapeHtml(f.destination.iata)} · ${f.status} · ${timeStr}</div>
+      <strong>✈️ ${escapeHtml(f.flightNumber)}</strong>${carrierLabel ? ` <span style="color:#9ca3af">(${escapeHtml(carrierLabel)})</span>` : ''}
+      <div>${escapeHtml(f.origin.iata)} → ${escapeHtml(f.destination.iata)} · ${f.status}${depStr ? ` · ${depStr}` : ''}${arrStr}</div>
+      ${acLine}${gateLine}
       ${f.delayMinutes > 0 ? `<div style="color:#f97316">+${f.delayMinutes}m delay</div>` : ''}
     </div>` };
     }
 
     if (intent.type === 'PRICE_WATCH') {
         const date = intent.date ?? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+        const dateLabel = new Date(date + 'T12:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' });
+        const header = `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+          <strong>💸 ${escapeHtml(intent.origin)} → ${escapeHtml(intent.destination)}</strong>
+          <span style="color:#6b7280;font-size:11px">${escapeHtml(dateLabel)}</span>
+        </div>`;
+
+        // Try Google Flights first — sort nonstop first, then by price
+        const gfResult = await fetchGoogleFlights({ origin: intent.origin, destination: intent.destination, departureDate: date });
+        if (gfResult.flights.length) {
+            const sorted = [...gfResult.flights].sort((a, b) => a.stops !== b.stops ? a.stops - b.stops : a.price - b.price);
+            const rows = sorted.slice(0, 5).map(f => {
+                const leg = f.legs[0];
+                const carrier = leg ? `${escapeHtml(leg.airlineCode)} ${escapeHtml(leg.flightNumber)}` : '';
+                const depTime = leg?.departureDatetime?.slice(11, 16) ?? '';
+                const arrTime = f.legs[f.legs.length - 1]?.arrivalDatetime?.slice(11, 16) ?? '';
+                const stopColor = f.stops === 0 ? '#22c55e' : '#9ca3af';
+                const stopLabel = f.stops === 0 ? 'nonstop' : `${f.stops} stop${f.stops > 1 ? 's' : ''}`;
+                const safeDepTime = escapeHtml(depTime);
+                const safeArrTime = escapeHtml(arrTime);
+                return `<div class="cmd-row" style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+          <div style="flex:1;min-width:0">
+            <span style="font-size:13px">${carrier}</span>
+            <span style="color:${stopColor};font-size:11px;margin-left:6px">${stopLabel}</span>
+          </div>
+          <div style="color:#9ca3af;font-size:11px;margin:0 10px">${safeDepTime}${safeArrTime ? `–${safeArrTime}` : ''} · ${escapeHtml(fmtDur(f.durationMinutes))}</div>
+          <div style="color:#60a5fa;font-weight:600">$${Math.round(f.price).toLocaleString()}</div>
+        </div>`;
+            }).join('');
+            return {
+                html: `<div class="cmd-section">${header}${rows}${gfResult.degraded ? '<div style="color:#f59e0b;font-size:11px;margin-top:4px">Partial results</div>' : ''}</div>`,
+            };
+        }
+
+        // Fallback to TravelPayouts / demo
         const { quotes, isDemoMode } = await fetchFlightPrices({ origin: intent.origin, destination: intent.destination, departureDate: date });
         if (!quotes.length) return { html: '<div class="cmd-empty">No prices found.</div>' };
-        const best = quotes[0]!;
+        const rows = [...quotes].sort((a, b) => a.stops !== b.stops ? a.stops - b.stops : a.priceAmount - b.priceAmount).slice(0, 5).map(q => {
+            const stopColor = q.stops === 0 ? '#22c55e' : '#9ca3af';
+            const stopLabel = q.stops === 0 ? 'nonstop' : `${q.stops} stop${q.stops > 1 ? 's' : ''}`;
+            return `<div class="cmd-row" style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+          <div style="flex:1">${escapeHtml(q.carrierName || q.carrierIata)}<span style="color:${stopColor};font-size:11px;margin-left:6px">${stopLabel}</span></div>
+          <div style="color:#60a5fa;font-weight:600">$${Math.round(q.priceAmount)}</div>
+        </div>`;
+        }).join('');
         return {
-            html: `<div class="cmd-section">
-      <strong>💸 ${escapeHtml(intent.origin)} → ${escapeHtml(intent.destination)}</strong>
-      ${isDemoMode ? '<span class="demo-badge" style="margin-left:6px">DEMO</span>' : ''}
-      <div>Best: <strong style="color:#60a5fa">$${Math.round(best.priceAmount)}</strong> via ${escapeHtml(best.carrierName || best.carrierIata)} · ${best.stops === 0 ? 'nonstop' : `${best.stops} stop`}</div>
-    </div>` };
+            html: `<div class="cmd-section">${header}${rows}${isDemoMode ? '<div style="color:#6b7280;font-size:11px;margin-top:4px">Indicative prices</div>' : ''}</div>`,
+        };
     }
 
     if (intent.type === 'NEWS_BRIEF') {
@@ -115,7 +208,7 @@ async function executeIntent(intent: Intent): Promise<CommandResult> {
     }
 
     return {
-        html: `<div class="cmd-empty">Unrecognized command. Try: <code>ops IST</code>, <code>flight TK1</code>, <code>price IST LHR</code>, <code>brief</code></div>`,
+        html: `<div class="cmd-empty">Try: <code>ops Dubai</code>, <code>flight EK3</code>, <code>price London Dubai</code>, <code>brief TK</code></div>`,
         error: true,
     };
 }
@@ -158,7 +251,7 @@ export class AviationCommandBar {
           <span>✈️ Aviation Command</span>
           <button id="aviation-cmd-close">×</button>
         </div>
-        <input id="aviation-cmd-input" type="text" placeholder="ops IST  /  flight TK1  /  price IST LHR  /  brief" autocomplete="off" spellcheck="false">
+        <input id="aviation-cmd-input" type="text" placeholder="ops Dubai  ·  flight EK3  ·  price London Dubai  ·  brief" autocomplete="off" spellcheck="false">
         <div id="aviation-cmd-suggestions"></div>
         <div id="aviation-cmd-result"></div>
         <div id="aviation-cmd-history-list"></div>
@@ -244,7 +337,10 @@ export class AviationCommandBar {
         const el = this.overlay?.querySelector('#aviation-cmd-suggestions');
         if (!el) return;
         const suggestions = [
-            'ops IST', 'ops LHR FRA', 'flight TK1', 'price IST LHR', 'brief', 'brief TK',
+            'ops IST', 'ops Dubai', 'ops London', 'ops LHR FRA', 'ops Lisbon',
+            'flight TK1', 'flight EK3', 'ME426 status',
+            'price IST LHR', 'price Dubai London', 'price LHR to DXB', 'price BEY DXB',
+            'brief', 'brief TK',
         ].filter(s => s.toLowerCase().startsWith(val.toLowerCase()) && s.toLowerCase() !== val.toLowerCase());
         if (!val || !suggestions.length) { el.innerHTML = ''; return; }
         el.innerHTML = suggestions.slice(0, 4).map(s =>

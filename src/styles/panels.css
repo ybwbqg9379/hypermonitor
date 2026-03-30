@@ -16,6 +16,9 @@
   background: var(--bg);
   scrollbar-width: none;
   -ms-overflow-style: none;
+  /* Fade hint on right edge when tabs overflow */
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
 }
 
 /* When .panel-content contains tabs (at any depth), remove top padding
@@ -1972,51 +1975,12 @@
 }
 
 /* ---- Prices tab ---- */
-.prices-list {
+.price-controls {
   display: flex;
-  flex-direction: column;
-}
-
-.price-row {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto auto auto;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 0;
   align-items: center;
-  gap: 0 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.price-row:hover {
-  background: var(--surface-hover);
-}
-
-.price-carrier {
-  font-weight: 600;
-  color: var(--text);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.price-route {
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.price-amount {
-  font-variant-numeric: tabular-nums;
-}
-
-.price-dur {
-  font-size: 11px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.price-stops {
-  font-size: 10px;
-  color: var(--text-muted);
-  text-align: right;
 }
 
 .price-input {
@@ -2035,23 +1999,145 @@
   border-color: var(--accent);
 }
 
-.tp-badge,
-.demo-badge {
-  font-size: 9px;
+.price-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  width: fit-content;
+}
+
+.price-mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.price-mode-btn.active {
+  background: var(--accent);
+  color: var(--bg);
   font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 3px;
-  letter-spacing: 0.3px;
 }
 
-.tp-badge {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+.price-mode-btn:not(.active):hover {
+  background: var(--surface-hover);
+}
+
+/* Google Flights itinerary cards */
+.gf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gf-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  padding: 8px;
+}
+
+.gf-summary {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.gf-price {
+  font-weight: 700;
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
 }
 
-.demo-badge {
-  background: color-mix(in srgb, var(--semantic-elevated) 12%, transparent);
-  color: var(--semantic-elevated);
+.gf-total-dur {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.gf-stops {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.gf-leg {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}
+
+.gf-airline {
+  font-family: var(--font-mono, monospace);
+  color: var(--text);
+  min-width: 60px;
+}
+
+.gf-dur {
+  color: var(--text-dim);
+}
+
+.gf-degraded {
+  font-size: 11px;
+  color: #92400e;
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+}
+
+/* Best Dates grid */
+.dp-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dp-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dp-row:hover {
+  background: var(--surface-hover);
+}
+
+.dp-date {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+}
+
+.dp-return {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 80px;
+}
+
+.dp-price {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.dp-cheap {
+  color: #22c55e;
+}
+
+.dp-expensive {
+  color: #f97316;
 }
 
 /* ---- News tab ---- */
@@ -2270,12 +2356,6 @@
 /* Section: Confidence */
 .ds-confidence { margin-bottom: 10px; }
 .ds-confidence .ds-section-label { color: var(--text-dim); }
-
-/* Attribution footer */
-.deduction-meta {
-  margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
-  font-size: 10px; color: var(--text-dim); letter-spacing: 0.03em;
-}
 
 /* ----------------------------------------------------------
    Thermal Escalation Panel (Option A — Dense Intel)
@@ -2536,3 +2616,145 @@
 .gb-total-row td { border-top: 2px solid rgba(255,255,255,0.2); }
 .gb-wow { display: block; font-size: 0.6rem; opacity: 0.85; margin-top: 1px; }
 .gb-updated { font-size: 0.65rem; opacity: 0.4; text-align: right; padding: 4px 6px; }
+
+/* ── Geo Hubs & Tech Hubs Panels ─────────────────────────────────────── */
+.geo-hub-item,
+.tech-hub-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.geo-hub-item:hover,
+.tech-hub-item:hover {
+  background: color-mix(in srgb, var(--text-dim) 6%, transparent);
+}
+
+.hub-rank {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 14px;
+  text-align: right;
+}
+
+.geo-hub-indicator,
+.hub-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+.geo-hub-indicator.high,
+.hub-indicator.high {
+  background: var(--semantic-critical);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--semantic-critical) 60%, transparent);
+}
+.geo-hub-indicator.elevated,
+.hub-indicator.elevated {
+  background: var(--semantic-elevated);
+}
+.geo-hub-indicator.low,
+.hub-indicator.low {
+  background: var(--text-muted);
+}
+
+.hub-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.hub-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.3;
+}
+
+.hub-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary, #e8e8e8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hub-flag {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.hub-breaking {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--semantic-high) 15%, transparent);
+  color: var(--semantic-high);
+  border: 1px solid color-mix(in srgb, var(--semantic-high) 25%, transparent);
+}
+.hub-breaking.geo {
+  background: color-mix(in srgb, var(--semantic-critical) 15%, transparent);
+  color: var(--semantic-critical);
+  border-color: color-mix(in srgb, var(--semantic-critical) 25%, transparent);
+}
+
+.hub-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.hub-news-count {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.hub-trend {
+  font-size: 11px;
+  font-weight: 600;
+}
+.hub-trend.rising { color: var(--semantic-critical); }
+.hub-trend.falling { color: var(--semantic-normal); }
+
+.geo-hub-type,
+.hub-tier {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.hub-score {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  min-width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.hub-score.geo { color: var(--semantic-high); }
+.geo-hub-item.high .hub-score.geo { color: var(--semantic-critical); }
+
+.hub-top-story,
+a.hub-top-story {
+  display: block;
+  padding: 4px 10px 7px 30px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--link-color, #4a9eff);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-subtle);
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+.hub-top-story:hover {
+  opacity: 1;
+  text-decoration: underline;
+}

@@ -100,6 +100,8 @@ export class EventHandlerManager implements AppModule {
   private boundMapResizeMoveHandler: ((e: MouseEvent) => void) | null = null;
   private boundMapEndResizeHandler: (() => void) | null = null;
   private boundMapResizeVisChangeHandler: (() => void) | null = null;
+  private boundMapWidthResizeMoveHandler: ((e: MouseEvent) => void) | null = null;
+  private boundMapWidthEndResizeHandler: (() => void) | null = null;
   private boundMapFullscreenEscHandler: ((e: KeyboardEvent) => void) | null = null;
   private boundMobileMenuKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private boundPanelCloseHandler: ((e: Event) => void) | null = null;
@@ -152,8 +154,8 @@ export class EventHandlerManager implements AppModule {
 
     // Ensure restored panel fetches fresh data (otherwise it may show no content)
     const panel = this.ctx.panels[panelId];
-    if (panel && 'fetchData' in panel) {
-      (panel as any).fetchData();
+    if (panel && 'fetchData' in panel && typeof (panel as { fetchData: unknown }).fetchData === 'function') {
+      (panel as { fetchData: () => void }).fetchData();
     }
   }
 
@@ -268,6 +270,15 @@ export class EventHandlerManager implements AppModule {
       document.removeEventListener('mouseup', this.boundMapEndResizeHandler);
       window.removeEventListener('blur', this.boundMapEndResizeHandler);
       this.boundMapEndResizeHandler = null;
+    }
+    if (this.boundMapWidthResizeMoveHandler) {
+      document.removeEventListener('mousemove', this.boundMapWidthResizeMoveHandler);
+      this.boundMapWidthResizeMoveHandler = null;
+    }
+    if (this.boundMapWidthEndResizeHandler) {
+      document.removeEventListener('mouseup', this.boundMapWidthEndResizeHandler);
+      window.removeEventListener('blur', this.boundMapWidthEndResizeHandler);
+      this.boundMapWidthEndResizeHandler = null;
     }
     if (this.boundMapResizeVisChangeHandler) {
       document.removeEventListener('visibilitychange', this.boundMapResizeVisChangeHandler);
@@ -430,8 +441,8 @@ export class EventHandlerManager implements AppModule {
     // undo via Ctrl/Cmd+Z
     this.boundUndoHandler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        const tag = (e.target as HTMLElement).tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
+        const tag = (e.target as HTMLElement)?.tagName ?? '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
         e.preventDefault();
         this.performUndo();
       }
@@ -475,6 +486,7 @@ export class EventHandlerManager implements AppModule {
     window.addEventListener('resize', this.boundResizeHandler);
 
     this.setupMapResize();
+    this.setupMapWidthResize();
     this.setupMapPin();
 
     this.boundVisibilityHandler = () => {
@@ -1382,6 +1394,55 @@ export class EventHandlerManager implements AppModule {
       if (document.hidden) endResize();
     };
     document.addEventListener('visibilitychange', this.boundMapResizeVisChangeHandler);
+  }
+
+  setupMapWidthResize(): void {
+    const mainContent = document.querySelector<HTMLElement>('.main-content');
+    const widthHandle = document.getElementById('mapWidthResizeHandle');
+    if (!mainContent || !widthHandle) return;
+
+    const saved = localStorage.getItem('map-col-width');
+    if (saved) mainContent.style.setProperty('--map-col-width', saved);
+
+    let isResizing = false;
+    let startX = 0;
+    let startTotalWidth = 0;
+    let startColPx = 0;
+
+    this.boundMapWidthEndResizeHandler = () => {
+      if (!isResizing) return;
+      isResizing = false;
+      this.ctx.map?.setIsResizing(false);
+      this.ctx.map?.resize();
+      document.body.classList.remove('map-width-resizing');
+      widthHandle.classList.remove('resizing');
+      const current = mainContent.style.getPropertyValue('--map-col-width');
+      if (current) localStorage.setItem('map-col-width', current);
+    };
+
+    widthHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startTotalWidth = mainContent.offsetWidth;
+      const raw = mainContent.style.getPropertyValue('--map-col-width') || '60%';
+      startColPx = startTotalWidth * (parseFloat(raw) / 100);
+      this.ctx.map?.setIsResizing(true);
+      document.body.classList.add('map-width-resizing');
+      widthHandle.classList.add('resizing');
+      e.preventDefault();
+    });
+
+    this.boundMapWidthResizeMoveHandler = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const delta = e.clientX - startX;
+      const newPct = Math.max(25, Math.min(75, ((startColPx + delta) / startTotalWidth) * 100));
+      mainContent.style.setProperty('--map-col-width', `${newPct.toFixed(1)}%`);
+      this.ctx.map?.resize();
+    };
+
+    document.addEventListener('mousemove', this.boundMapWidthResizeMoveHandler);
+    document.addEventListener('mouseup', this.boundMapWidthEndResizeHandler);
+    window.addEventListener('blur', this.boundMapWidthEndResizeHandler);
   }
 
   setupMapPin(): void {

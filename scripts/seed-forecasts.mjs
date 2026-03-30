@@ -1,10 +1,15 @@
 #!/usr/bin/env node
+// @ts-check
+/// <reference path="./seed-forecasts.types.d.ts" />
 
 import crypto from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { loadEnvFile, runSeed, CHROME_UA } from './_seed-utils.mjs';
 import { tagRegions } from './_prediction-scoring.mjs';
 import { resolveR2StorageConfig, putR2JsonObject, getR2JsonObject } from './_r2-storage.mjs';
+import { extractFirstJsonObject, extractFirstJsonArray, cleanJsonText } from './_llm-json.mjs';
+import { loadTickerSet } from './_ticker-validation.mjs';
+import { computeEmaWindows, computeRisk24h } from './_ema-threat-engine.mjs';
 
 const _isDirectRun = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'));
 if (_isDirectRun) loadEnvFile(import.meta.url);
@@ -156,9 +161,9 @@ const CHOKEPOINT_MARKET_REGIONS = {
 };
 
 const THEATER_GEO_GROUPS = {
-  'Middle East': 'MENA',
-  'Red Sea': 'MENA',
-  'Persian Gulf': 'MENA',
+  'Middle East': 'MENA_Gulf',       // Strait of Hormuz, Persian Gulf, Arabian Sea, Iran
+  'Persian Gulf': 'MENA_Gulf',
+  'Red Sea': 'MENA_RedSea',         // Red Sea, Bab el-Mandeb, Suez Canal
   'South China Sea': 'AsiaPacific',
   'Western Pacific': 'AsiaPacific',
   'Southeast Asia': 'AsiaPacific',
@@ -674,6 +679,8 @@ async function readInputKeys() {
     MARKET_INPUT_KEYS.bisPolicy,
     MARKET_INPUT_KEYS.shippingRates,
     MARKET_INPUT_KEYS.correlationCards,
+    'conflict:acled:v1:all:0:0',
+    'conflict:ema-windows:v1',
     ...fredKeys,
   ];
   const pipeline = keys.map(k => ['GET', k]);
@@ -724,6 +731,12 @@ async function readInputKeys() {
     bisPolicyRates: parsedByKey[MARKET_INPUT_KEYS.bisPolicy],
     shippingRates: parsedByKey[MARKET_INPUT_KEYS.shippingRates],
     correlationCards: parsedByKey[MARKET_INPUT_KEYS.correlationCards],
+    acledEvents: (() => {
+      const raw = parsedByKey['conflict:acled:v1:all:0:0'];
+      if (!raw) return [];
+      return Array.isArray(raw) ? raw : (raw?.events ?? []);
+    })(),
+    emaWindowsRaw: results[keys.indexOf('conflict:ema-windows:v1')]?.result ?? null,
     fredSeries,
   };
 }
@@ -889,7 +902,7 @@ function extractCiiScores(inputs) {
   return arr.map(normalizeCiiEntry);
 }
 
-function detectConflictScenarios(inputs) {
+function detectConflictScenarios(inputs, emaRiskScores) {
   const predictions = [];
   const scores = extractCiiScores(inputs);
   const theaters = inputs.theaterPosture?.theaters || [];
@@ -928,7 +941,19 @@ function detectConflictScenarios(inputs) {
 
     const ciiNorm = normalize(c.score, 50, 100);
     const eventBoost = (matchingIran.length + matchingUcdp.length) > 0 ? 0.1 : 0;
-    const prob = Math.min(0.9, ciiNorm * 0.6 + eventBoost + (c.trend === 'rising' ? 0.1 : 0));
+    let prob = Math.min(0.9, ciiNorm * 0.6 + eventBoost + (c.trend === 'rising' ? 0.1 : 0));
+
+    const emaRisk = emaRiskScores?.get(countryName ?? '');
+    if (emaRisk?.velocitySpike) {
+      signals.push({
+        type: 'velocity_spike',
+        value: `EMA z-score: ${emaRisk.zscore.toFixed(1)} (${emaRisk.risk24h}/100 risk)`,
+        weight: 0.35,
+      });
+      prob = Math.min(0.99, prob + 0.08);
+      sourceCount++;
+    }
+
     const confidence = Math.max(0.3, normalize(sourceCount, 0, 4));
 
     predictions.push(makePrediction(
@@ -1753,7 +1778,7 @@ function detectInfraScenarios(inputs) {
 }
 
 // ── Phase 4: Standalone detectors ───────────────────────────
-function detectUcdpConflictZones(inputs) {
+function detectUcdpConflictZones(inputs, emaRiskScores) {
   const predictions = [];
   const ucdp = Array.isArray(inputs.ucdpEvents) ? inputs.ucdpEvents : inputs.ucdpEvents?.events || [];
   if (ucdp.length === 0) return predictions;
@@ -1767,12 +1792,24 @@ function detectUcdpConflictZones(inputs) {
 
   for (const [country, count] of Object.entries(byCountry)) {
     if (count < 10) continue;
+
+    const signals = [{ type: 'ucdp', value: `${count} UCDP conflict events`, weight: 0.5 }];
+    let prob = Math.min(0.85, normalize(count, 5, 100) * 0.7);
+
+    const emaRisk = emaRiskScores?.get(country?.toLowerCase?.() ?? '');
+    if (emaRisk?.velocitySpike) {
+      signals.push({
+        type: 'velocity_spike',
+        value: `EMA z-score: ${emaRisk.zscore.toFixed(1)} (${emaRisk.risk24h}/100 risk)`,
+        weight: 0.35,
+      });
+      prob = Math.min(0.99, prob + 0.08);
+    }
+
     predictions.push(makePrediction(
       'conflict', country,
       `Active armed conflict: ${country}`,
-      Math.min(0.85, normalize(count, 5, 100) * 0.7),
-      0.3, '30d',
-      [{ type: 'ucdp', value: `${count} UCDP conflict events`, weight: 0.5 }],
+      prob, 0.3, '30d', signals,
     ));
   }
   return predictions;
@@ -3186,39 +3223,9 @@ async function extractCriticalSignalBundle(inputs) {
   return bundle;
 }
 
-function extractFirstJsonObject(text) {
-  const start = text.indexOf('{');
-  if (start === -1) return '';
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const char = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (char === '{') depth += 1;
-    if (char === '}') {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return text.slice(start);
-}
-
 function tryParseImpactExpansionCandidate(candidate) {
   try {
-    const parsed = JSON.parse(candidate);
+    const parsed = JSON.parse(cleanJsonText(candidate));
     if (Array.isArray(parsed?.candidates)) return { candidates: parsed.candidates, stage: 'object_candidates' };
     if (Array.isArray(parsed)) return { candidates: parsed, stage: 'direct_array' };
   } catch {
@@ -3227,7 +3234,7 @@ function tryParseImpactExpansionCandidate(candidate) {
   // Gemini sometimes returns '"candidates": [...]' without outer braces (especially when
   // wrapping in a markdown code fence). Try wrapping in {} to recover.
   try {
-    const wrapped = JSON.parse(`{${candidate}}`);
+    const wrapped = JSON.parse(cleanJsonText(`{${candidate}}`));
     if (Array.isArray(wrapped?.candidates)) return { candidates: wrapped.candidates, stage: 'wrapped_candidates' };
   } catch {
     // continue
@@ -4581,8 +4588,23 @@ function summarizeImpactPathScore(path = null) {
   if (path.simulationAdjustment !== undefined) {
     summary.simulationAdjustment = Number(path.simulationAdjustment);
     summary.mergedAcceptanceScore = Number(path.mergedAcceptanceScore || path.acceptanceScore || 0);
+    if (path.simulationSignal !== undefined) {
+      summary.simulationSignal = path.simulationSignal;
+    }
   }
   return summary;
+}
+
+function buildForecastEvalPayload(data = {}) {
+  const evaluation = data?.deepPathEvaluation || null;
+  if (!evaluation) return null;
+  return {
+    runId: data?.runId || '',
+    generatedAt: data?.generatedAt || Date.now(),
+    status: evaluation.status || '',
+    selectedPaths: evaluation.selectedPaths || [],
+    rejectedPaths: evaluation.rejectedPaths || [],
+  };
 }
 
 function buildDeepPathScorecardsPayload(data = {}, runId = '') {
@@ -4901,6 +4923,9 @@ function buildPublishedForecastPayload(pred) {
       d30: Number(pred.projections.d30 || 0),
     } : null,
     caseFile: slimForecastCaseForPublish(pred.caseFile),
+    simulationAdjustment: Number(pred.simulationAdjustment || 0),
+    simPathConfidence: Number(pred.simPathConfidence || 0),
+    demotedBySimulation: !!pred.demotedBySimulation,
   };
 }
 
@@ -11255,19 +11280,12 @@ function annotateDeepForecastOrigins(worldState, acceptedPaths = []) {
 }
 
 function normalizeActorName(name) {
-  return String(name || '').toLowerCase().trim().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ');
-}
-
-function extractPathActors(path) {
-  const actors = new Set();
-  for (const hop of [path.direct, path.second, path.third]) {
-    if (!hop) continue;
-    for (const a of hop.affectedAssets || []) {
-      const n = normalizeActorName(a);
-      if (n) actors.add(n);
-    }
+  let s = String(name || '').trim();
+  const colonIdx = s.indexOf(':');
+  if (colonIdx > 0 && /^[a-z][a-z0-9_-]*$/.test(s.slice(0, colonIdx))) {
+    s = s.slice(colonIdx + 1);
   }
-  return [...actors];
+  return s.toLowerCase().replace(/[_-]/g, ' ').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 const BUCKET_KEYWORDS = {
@@ -11282,15 +11300,15 @@ const BUCKET_KEYWORDS = {
 };
 
 const CHANNEL_KEYWORDS = {
-  energy_supply_shock: ['oil supply', 'crude supply', 'energy supply', 'oil shock', 'energy shock', 'petroleum supply'],
+  energy_supply_shock: ['oil supply', 'crude supply', 'energy supply', 'oil shock', 'energy shock', 'petroleum supply', 'oil infrastructure', 'supply disruption', 'oil price spike', 'crude price', 'energy price'],
   gas_supply_stress: ['gas supply', 'lng supply', 'natural gas', 'gas price'],
   commodity_repricing: ['commodity', 'repricing', 'shortage', 'supply chain'],
   oil_macro_shock: ['oil macro', 'crude macro', 'oil price macro', 'petro macro'],
   global_crude_spread_stress: ['crude spread', 'brent wti', 'grade spread'],
-  shipping_cost_shock: ['shipping cost', 'freight cost', 'freight rate', 'route disruption', 'chokepoint', 'transit'],
+  shipping_cost_shock: ['shipping cost', 'freight cost', 'freight rate', 'route disruption', 'chokepoint', 'transit', 'shipping interrupt', 'rerouting', 'vessel', 'shipping lane', 'maritime'],
   sovereign_stress: ['sovereign', 'debt stress', 'default risk', 'credit stress', 'bond spread'],
-  risk_off_rotation: ['risk off', 'risk aversion', 'flight to safety', 'sell off'],
-  security_escalation: ['escalat', 'military action', 'conflict', 'war', 'strike', 'attack'],
+  risk_off_rotation: ['risk off', 'risk aversion', 'flight to safety', 'sell off', 'selloff', 'sell-off', 'capital flight', 'capital outflow', 'risk premium', 'avers', 'retreat', 'flight to', 'sovereign risk', 'shockwave', 'shock wave', 'economic shock', 'contagion', 'spiral', 'crisis'],
+  security_escalation: ['escalat', 'military action', 'conflict', 'war', 'strike', 'attack', 'military', 'geopolit'],
   yield_curve_stress: ['yield curve', 'yield spread', 'term premium'],
   volatility_shock: ['volatility', 'vix', 'vol spike'],
   safe_haven_bid: ['safe haven', 'gold', 'yen', 'swiss franc', 'treasur'],
@@ -11322,13 +11340,21 @@ const NEGATION_TERMS = ['ceasefire', 'reopen', 'reopened', 'resolv', 'diplomatic
 const SIMULATION_MERGE_ACCEPT_THRESHOLD = 0.50;
 const SIMULATION_ELIGIBILITY_RANK_THRESHOLD = 0.40;
 
-function contradictsPremise(invalidator, expandedPath) {
+/**
+ * @param {string} invalidator
+ * @param {ExpandedPath} expandedPath
+ * @param {boolean} [fromSimulation]
+ * @returns {boolean}
+ */
+function contradictsPremise(invalidator, expandedPath, fromSimulation = false) {
   if (!invalidator || typeof invalidator !== 'string') return false;
   const text = invalidator.toLowerCase();
-  const hasNegation = NEGATION_TERMS.some((t) => text.includes(t));
-  if (!hasNegation) return false;
+  if (!fromSimulation) {
+    const hasNegation = NEGATION_TERMS.some((t) => text.includes(t));
+    if (!hasNegation) return false;
+  }
   const routeKey = expandedPath?.candidate?.routeFacilityKey || '';
-  const commodityKey = expandedPath?.candidate?.commodityKey || '';
+  const commodityKey = (expandedPath?.candidate?.commodityKey || '').replace(/_/g, ' ');
   if (routeKey || commodityKey) {
     return (
       (routeKey && text.includes(routeKey.toLowerCase())) ||
@@ -11344,13 +11370,18 @@ function contradictsPremise(invalidator, expandedPath) {
   return subjectKeywords.some((kw) => text.includes(kw));
 }
 
+/**
+ * @param {string} stabilizer
+ * @param {CandidatePacket} candidatePacket
+ * @returns {boolean}
+ */
 function negatesDisruption(stabilizer, candidatePacket) {
   if (!stabilizer || typeof stabilizer !== 'string') return false;
   const text = stabilizer.toLowerCase();
   const hasNegation = NEGATION_TERMS.some((t) => text.includes(t));
   if (!hasNegation) return false;
   const routeKey = candidatePacket?.routeFacilityKey || '';
-  const commodityKey = candidatePacket?.commodityKey || '';
+  const commodityKey = (candidatePacket?.commodityKey || '').replace(/_/g, ' ');
   if (routeKey || commodityKey) {
     return (
       (routeKey && text.includes(routeKey.toLowerCase())) ||
@@ -11359,37 +11390,90 @@ function negatesDisruption(stabilizer, candidatePacket) {
   }
   // Non-maritime: match on stateKind and bucket keywords.
   const stateKind = candidatePacket?.stateKind || '';
-  const bucket = candidatePacket?.topBucketId || '';
+  const bucket = candidatePacket?.marketContext?.topBucketId || candidatePacket?.topBucketId || '';
   const subjectKeywords = [...stateKind.toLowerCase().split('_'), ...bucket.toLowerCase().split('_')]
     .filter((w) => w.length >= 4);
   return subjectKeywords.some((kw) => text.includes(kw));
 }
 
+/**
+ * @param {ExpandedPath} expandedPath
+ * @param {TheaterResult} simTheaterResult
+ * @param {CandidatePacket} candidatePacket
+ * @returns {{ adjustment: number; details: SimulationAdjustmentDetail }}
+ */
 function computeSimulationAdjustment(expandedPath, simTheaterResult, candidatePacket) {
   let adjustment = 0;
-  const details = { bucketChannelMatch: false, actorOverlapCount: 0, invalidatorHit: false, stabilizerHit: false };
+  const details = { bucketChannelMatch: false, actorOverlapCount: 0, invalidatorHit: false, stabilizerHit: false, resolvedChannel: '', channelSource: 'none', candidateActorCount: 0, actorSource: 'none', simPathConfidence: 1.0 };
 
   const { topPaths = [], invalidators = [], stabilizers = [] } = simTheaterResult || {};
-  const pathBucket = expandedPath?.direct?.targetBucket || candidatePacket?.topBucketId || '';
-  const pathChannel = expandedPath?.direct?.channel || candidatePacket?.topChannel || '';
-  const pathActors = extractPathActors(expandedPath);
+  const pathBucket = expandedPath?.direct?.targetBucket
+    || candidatePacket?.marketContext?.topBucketId
+    || candidatePacket?.topBucketId
+    || '';
+  const directChannel = expandedPath?.direct?.channel || '';
+  const marketChannel = candidatePacket?.marketContext?.topChannel || candidatePacket?.topChannel || '';
+  const pathChannel = Object.hasOwn(CHANNEL_KEYWORDS, directChannel)
+    ? directChannel
+    : Object.hasOwn(CHANNEL_KEYWORDS, marketChannel)
+      ? marketChannel
+      : '';
+  const rawStateActors = Array.isArray(candidatePacket?.stateSummary?.actors)
+    ? candidatePacket.stateSummary.actors
+    : [];
+  let candidateActors;
+  let actorSrc;
+  if (rawStateActors.length > 0) {
+    candidateActors = [...new Set(rawStateActors.map(normalizeActorName).filter(Boolean))];
+    actorSrc = 'stateSummary';
+  } else {
+    const assetNames = [];
+    for (const hop of [expandedPath.direct, expandedPath.second, expandedPath.third]) {
+      if (!hop) continue;
+      for (const a of hop.affectedAssets || []) {
+        const n = normalizeActorName(a);
+        if (n) assetNames.push(n);
+      }
+    }
+    candidateActors = [...new Set(assetNames)];
+    actorSrc = candidateActors.length > 0 ? 'affectedAssets' : 'none';
+  }
+  details.candidateActorCount = candidateActors.length;
+  details.actorSource = actorSrc;
+  details.resolvedChannel = pathChannel;
+  details.channelSource = Object.hasOwn(CHANNEL_KEYWORDS, directChannel)
+    ? 'direct'
+    : Object.hasOwn(CHANNEL_KEYWORDS, marketChannel)
+      ? 'market'
+      : 'none';
 
   const bucketChannelMatch = topPaths.find(
     (sp) => matchesBucket(sp, pathBucket) && matchesChannel(sp, pathChannel)
   );
   if (bucketChannelMatch) {
-    adjustment += 0.08;
+    // Scale bonuses by sim path confidence.
+    // Absent or non-finite → 1.0 (conservative fallback for legacy LLM output without this field).
+    // Explicit 0 → simConf=0, no positive adjustment (if no negatives fire, adj=0 and early exit).
+    const rawConf = bucketChannelMatch.confidence;
+    const simConf = (typeof rawConf !== 'number' || !Number.isFinite(rawConf))
+      ? 1.0
+      : Math.min(1, Math.max(0, rawConf));
+    adjustment += +parseFloat((0.08 * simConf).toFixed(3));
     details.bucketChannelMatch = true;
-    const simActors = new Set((bucketChannelMatch.keyActors || []).map(normalizeActorName));
-    const overlap = pathActors.filter((a) => simActors.has(a));
+    details.simPathConfidence = simConf;
+    const simActors = new Set((Array.isArray(bucketChannelMatch.keyActors) ? bucketChannelMatch.keyActors : []).map(normalizeActorName));
+    const overlap = candidateActors.filter((a) => simActors.has(a));
     details.actorOverlapCount = overlap.length;
+    // Overlap bonus fires only when both sides have named geo-political actors.
+    // Macro-financial theaters with role-based stateSummary.actors (e.g. "Commodity traders",
+    // "Central banks") will have actorOverlapCount=0 — this is expected, not a bug.
     if (overlap.length >= 2) {
-      adjustment += 0.04;
+      adjustment += +parseFloat((0.04 * simConf).toFixed(3));
     }
   }
 
   for (const inv of invalidators) {
-    if (contradictsPremise(inv, expandedPath)) {
+    if (contradictsPremise(inv, expandedPath, true)) {
       adjustment -= 0.12;
       details.invalidatorHit = true;
       break;
@@ -11407,6 +11491,14 @@ function computeSimulationAdjustment(expandedPath, simTheaterResult, candidatePa
   return { adjustment: +adjustment.toFixed(3), details };
 }
 
+/**
+ * @param {object} evaluation
+ * @param {SimulationOutcome} simulationOutcome
+ * @param {CandidatePacket[]} candidatePackets
+ * @param {object} snapshot
+ * @param {object | null} priorWorldState
+ * @returns {{ evaluation: object; simulationEvidence: SimulationEvidence | null }}
+ */
 function applySimulationMerge(evaluation, simulationOutcome, candidatePackets, snapshot, priorWorldState) {
   if (!simulationOutcome?.theaterResults?.length) {
     return { evaluation, simulationEvidence: null };
@@ -11425,6 +11517,15 @@ function applySimulationMerge(evaluation, simulationOutcome, candidatePackets, s
 
   for (const path of allPaths) {
     if (path.type !== 'expanded') continue;
+    // Clear stale simulation metadata from prior cycles before re-evaluating.
+    // Must happen before any `continue` so paths with no matching theater or zero
+    // adjustment don't retain fields written by a different simulation run.
+    delete path.simulationAdjustment;
+    delete path.mergedAcceptanceScore;
+    delete path.simulationSignal;
+    delete path.demotedBySimulation;
+    delete path.promotedBySimulation;
+
     const simResult = simByTheater.get(path.candidateStateId);
     if (!simResult) continue;
 
@@ -11450,6 +11551,13 @@ function applySimulationMerge(evaluation, simulationOutcome, candidatePackets, s
 
     path.simulationAdjustment = adjustment;
     path.mergedAcceptanceScore = mergedAcceptanceScore;
+    path.simulationSignal = {
+      backed: adjustment > 0,
+      adjustmentDelta: adjustment,
+      channelSource: details.channelSource,
+      demoted: wasAccepted && mergedAcceptanceScore < SIMULATION_MERGE_ACCEPT_THRESHOLD,
+      simPathConfidence: details.simPathConfidence,
+    };
 
     if (wasAccepted && mergedAcceptanceScore < SIMULATION_MERGE_ACCEPT_THRESHOLD) {
       path.demotedBySimulation = true;
@@ -11501,6 +11609,29 @@ function applySimulationMerge(evaluation, simulationOutcome, candidatePackets, s
       evaluation.rejectedPaths = newRejected;
       evaluation.status = 'completed_no_material_change';
       evaluation.deepWorldState = null;
+    } else if (evaluation.status === 'completed') {
+      // CASE 3: Partial change within a completed run — at least one expanded path was
+      // promoted or demoted, but the set of selected expanded paths is non-empty.
+      // Status stays 'completed'; rebuild bundle and world state to reflect the updated path set.
+      const acceptedBundle = buildImpactExpansionBundleFromPaths(newSelectedExpanded, candidatePackets, {
+        source: 'deep_selected',
+        parseStage: 'accepted_paths',
+        parseMode: 'accepted_paths',
+      });
+      const deepWorldState = annotateDeepForecastOrigins(
+        buildDeepWorldStateFromSnapshot(snapshot, priorWorldState, acceptedBundle, {
+          status: 'completed',
+          selectedStateIds: newSelectedExpanded.map((p) => p.candidateStateId),
+          eligibleStateCount: (candidatePackets || []).length,
+          selectedPathCount: newSelectedExpanded.length,
+          replacedFastRun: true,
+        }),
+        newSelectedExpanded,
+      );
+      evaluation.selectedPaths = newSelected;
+      evaluation.rejectedPaths = newRejected;
+      evaluation.impactExpansionBundle = acceptedBundle;
+      evaluation.deepWorldState = deepWorldState;
     }
   }
 
@@ -11984,6 +12115,7 @@ function buildForecastTraceArtifacts(data, context = {}, config = {}) {
     manifest.runId,
   );
   const pathScorecards = buildDeepPathScorecardsPayload(data, manifest.runId);
+  const forecastEval = buildForecastEvalPayload(data);
 
   return {
     prefix,
@@ -11999,6 +12131,7 @@ function buildForecastTraceArtifacts(data, context = {}, config = {}) {
     deepWorldStateKey,
     runStatusKey,
     forecastEvalKey: artifactKeys.forecastEvalKey,
+    forecastEval,
     runStatus,
     impactExpansionDebugKey,
     impactExpansionDebug,
@@ -12143,6 +12276,12 @@ async function writeForecastTraceArtifacts(data, context = {}) {
       kind: 'path_scorecards',
     });
   }
+  if (artifacts.forecastEval) {
+    await putR2JsonObject(storageConfig, artifacts.forecastEvalKey, artifacts.forecastEval, {
+      runid: String(artifacts.manifest.runId || ''),
+      kind: 'forecast_eval',
+    });
+  }
   await Promise.all(
     artifacts.forecasts.map((item, index) => putR2JsonObject(storageConfig, item.key, item.payload, {
       runid: String(artifacts.manifest.runId || ''),
@@ -12169,7 +12308,9 @@ async function writeForecastTraceArtifacts(data, context = {}) {
     quality: artifacts.summary.quality,
     worldStateSummary: artifacts.summary.worldStateSummary,
   };
-  await writeForecastTracePointer(pointer);
+  if (!context.skipPointer) {
+    await writeForecastTracePointer(pointer);
+  }
   return pointer;
 }
 
@@ -13987,39 +14128,9 @@ function extractStructuredLlmPayload(text) {
   };
 }
 
-function extractFirstJsonArray(text) {
-  const start = text.indexOf('[');
-  if (start === -1) return '';
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const char = text[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (char === '[') depth += 1;
-    if (char === ']') {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
-  }
-  return text.slice(start);
-}
-
 function tryParseStructuredCandidate(candidate) {
   try {
-    const parsed = JSON.parse(candidate);
+    const parsed = JSON.parse(cleanJsonText(candidate));
     if (Array.isArray(parsed)) return { items: parsed, stage: 'direct_array' };
     if (Array.isArray(parsed?.items)) return { items: parsed.items, stage: 'object_items' };
     if (Array.isArray(parsed?.scenarios)) return { items: parsed.scenarios, stage: 'object_scenarios' };
@@ -14030,7 +14141,7 @@ function tryParseStructuredCandidate(candidate) {
       const partial = candidate.slice(bracketIdx);
       for (const suffix of ['"}]', '}]', '"]', ']']) {
         try {
-          const repaired = JSON.parse(partial + suffix);
+          const repaired = JSON.parse(cleanJsonText(partial + suffix));
           if (Array.isArray(repaired)) return { items: repaired, stage: 'repaired_array' };
         } catch {
           // continue
@@ -14722,6 +14833,38 @@ async function enrichScenariosWithLLM(predictions) {
   return enrichmentMeta;
 }
 
+async function updateEmaWindows(inputs, url, token) {
+  let priorWindows = new Map();
+  try {
+    const raw = inputs.emaWindowsRaw;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      priorWindows = new Map(Object.entries(parsed));
+    }
+  } catch { /* cold start */ }
+
+  const ucdpEvents = Array.isArray(inputs.ucdpEvents) ? inputs.ucdpEvents : (inputs.ucdpEvents?.events ?? []);
+  const acledEvents = inputs.acledEvents ?? [];
+
+  const updatedWindows = computeEmaWindows(priorWindows, acledEvents, ucdpEvents);
+  const riskScores = computeRisk24h(updatedWindows);
+
+  const windowsObj = Object.fromEntries(updatedWindows);
+  const ttl = 26 * 3600;
+  await redisCommand(url, token, ['SET', 'conflict:ema-windows:v1', JSON.stringify(windowsObj), 'EX', ttl])
+    .catch(err => console.warn(`  [EMA] Failed to persist windows: ${err.message}`));
+  await redisCommand(url, token, ['SET', 'seed-meta:conflict:ema-windows:v1', JSON.stringify({ fetchedAt: new Date().toISOString(), recordCount: updatedWindows.size }), 'EX', ttl])
+    .catch(err => console.warn(`  [EMA] Failed to persist seed-meta: ${err.message}`));
+
+  const spikeCount = [...riskScores.values()].filter(r => r.velocitySpike).length;
+  if (spikeCount > 0) {
+    console.log(`  [EMA] ${spikeCount} velocity spike(s) detected:`,
+      [...riskScores.entries()].filter(([, v]) => v.velocitySpike).map(([k, v]) => `${k}(${v.risk24h})`).join(', '));
+  }
+
+  return riskScores;
+}
+
 // ── Main pipeline ──────────────────────────────────────────
 async function fetchForecasts() {
   await warmPingChokepoints();
@@ -14744,14 +14887,16 @@ async function fetchForecasts() {
   const prior = await readPriorPredictions();
 
   console.log('  Running domain detectors...');
+  const { url: emaUrl, token: emaToken } = getRedisCredentials();
+  const emaRiskScores = await updateEmaWindows(inputs, emaUrl, emaToken);
   const predictions = [
-    ...detectConflictScenarios(inputs),
+    ...detectConflictScenarios(inputs, emaRiskScores),
     ...detectMarketScenarios(inputs),
     ...detectSupplyChainScenarios(inputs),
     ...detectPoliticalScenarios(inputs),
     ...detectMilitaryScenarios(inputs),
     ...detectInfraScenarios(inputs),
-    ...detectUcdpConflictZones(inputs),
+    ...detectUcdpConflictZones(inputs, emaRiskScores),
     ...detectCyberScenarios(inputs),
     ...detectGpsJammingScenarios(inputs),
     ...detectFromPredictionMarkets(inputs),
@@ -15511,6 +15656,11 @@ RULES:
 - narrative: 2–3 sentences grounding the thesis in the provided context. Cite specific signals by name (e.g. "Hormuz at CRITICAL risk", "VIX at 28", "Polymarket: 74% Iran conflict"). When prediction market odds are provided, weave them into the thesis.
 - risk_caveat: 1 sentence on the primary counter-thesis or risk
 - driver: 1–3 words naming the core geopolitical/macro driver (e.g. "Hormuz closure risk", "Fed pivot", "Taiwan tension")
+- transmission_chain: array of 2–4 objects, each with:
+  - node: short label (max 8 words) for this step in the causal chain
+  - impact_type: one of supply_disruption, demand_shift, earnings_risk, valuation_shift, policy_shift, capital_flow, sentiment_shift, contagion
+  - logic: 1 sentence (max 15 words) explaining what this step means for the trade thesis
+  The chain models the causal path from geopolitical event to price impact.
 - Cross-reference signals: if geopolitical escalation coincides with a commodity move in the opposite direction, flag the divergence and consider a HEDGE rather than directional call.
 - Prioritise cards by signal strength — lead with the highest-conviction setup.
 - NEVER use tickers not in the ALLOWED TICKERS list
@@ -15519,7 +15669,7 @@ RULES:
 - NEVER write underscored_variable_names or internal keys in any field — always use plain English prose
 
 Respond with ONLY a JSON array:
-[{"ticker":"","name":"","direction":"","timeframe":"","confidence":"","title":"","narrative":"","risk_caveat":"","driver":""},...]`;
+[{"ticker":"","name":"","direction":"","timeframe":"","confidence":"","title":"","narrative":"","risk_caveat":"","driver":"","transmission_chain":[{"node":"","impact_type":"","logic":""}]},...]`;
 
 function buildMarketImplicationsContext(inputs) {
   const parts = [];
@@ -15655,14 +15805,19 @@ function buildMarketImplicationsContext(inputs) {
   return parts.length > 0 ? parts.join('\n\n') : 'No live world state available.';
 }
 
-function validateMarketImplications(cards) {
+const VALID_IMPACT_TYPES = new Set([
+  'supply_disruption', 'demand_shift', 'earnings_risk', 'valuation_shift',
+  'policy_shift', 'capital_flow', 'sentiment_shift', 'contagion',
+]);
+
+function validateMarketImplications(cards, allowedTickers = ALL_ALLOWED_TICKERS) {
   if (!Array.isArray(cards)) return [];
   const seen = new Set();
   const valid = [];
   for (const card of cards) {
     if (!card || typeof card !== 'object') continue;
     const ticker = typeof card.ticker === 'string' ? card.ticker.trim().toUpperCase() : '';
-    if (!ticker || !ALL_ALLOWED_TICKERS.has(ticker)) continue;
+    if (!ticker || !allowedTickers.has(ticker)) continue;
     if (seen.has(ticker)) continue;
     const direction = typeof card.direction === 'string' ? card.direction.trim().toUpperCase() : '';
     if (!['LONG', 'SHORT', 'HEDGE'].includes(direction)) continue;
@@ -15674,6 +15829,18 @@ function validateMarketImplications(cards) {
     if (title.length < 5) continue;
     const narrative = typeof card.narrative === 'string' ? card.narrative.trim().slice(0, 600) : '';
     if (narrative.length < 20) continue;
+    let chain = [];
+    if (Array.isArray(card.transmission_chain)) {
+      for (const step of card.transmission_chain.slice(0, 4)) {
+        if (!step || typeof step !== 'object') continue;
+        const node = typeof step.node === 'string' ? step.node.trim().slice(0, 80) : '';
+        const impactType = typeof step.impact_type === 'string' ? step.impact_type.trim().toLowerCase() : '';
+        const logic = typeof step.logic === 'string' ? step.logic.trim().slice(0, 120) : '';
+        if (node.length < 3 || !VALID_IMPACT_TYPES.has(impactType) || logic.length < 5) continue;
+        chain.push({ node, impact_type: impactType, logic });
+      }
+    }
+    if (chain.length === 1) chain = [];
     seen.add(ticker);
     valid.push({
       ticker,
@@ -15685,6 +15852,7 @@ function validateMarketImplications(cards) {
       narrative,
       risk_caveat: typeof card.risk_caveat === 'string' ? card.risk_caveat.trim().slice(0, 300) : '',
       driver: typeof card.driver === 'string' ? card.driver.trim().slice(0, 60) : '',
+      transmission_chain: chain,
     });
     if (valid.length >= 5) break;
   }
@@ -15718,13 +15886,36 @@ async function buildAndSeedMarketImplications(inputs) {
     return;
   }
 
-  const cards = validateMarketImplications(rawCards);
+  const { url, token } = getRedisCredentials();
+
+  // Extend the curated static allowlist with tradeable equity symbols from Redis.
+  // ALL_ALLOWED_TICKERS is always preserved (ETFs, defense, commodities, forex, rates, crypto).
+  // The live set adds stocks we have live price data for (e.g. NFLX, WMT) that are not in
+  // the static list, but only after stripping non-tradeable entries: index symbols (^GSPC,
+  // ^DJI) and foreign-exchange suffixes (RELIANCE.NS) are in the bootstrap for display only
+  // and must not be accepted as valid card tickers.
+  const liveTickerSet = await loadTickerSet(url, token);
+  let effectiveTickers;
+  if (liveTickerSet.size > 0) {
+    const tradeableLive = new Set(
+      [...liveTickerSet].filter(s => /^[A-Z]{1,6}(-[A-Z])?$/.test(s)),
+    );
+    effectiveTickers = new Set([...ALL_ALLOWED_TICKERS, ...tradeableLive]);
+    console.log(`  [MarketImplications] Extended allowlist: ${ALL_ALLOWED_TICKERS.size} static + ${tradeableLive.size} live equity symbols`);
+  } else {
+    effectiveTickers = ALL_ALLOWED_TICKERS;
+    console.warn('  [MarketImplications] Redis ticker set empty — using static allowlist only');
+  }
+
+  const cards = validateMarketImplications(rawCards, effectiveTickers);
   if (cards.length === 0) {
     console.warn('  [MarketImplications] All cards failed validation — skipping write');
     return;
   }
+  if (cards.length < rawCards.length) {
+    console.log(`  [MarketImplications] Validation: kept ${cards.length}/${rawCards.length} cards`);
+  }
 
-  const { url, token } = getRedisCredentials();
   const payload = { cards, generatedAt: new Date().toISOString(), model: result.model || '' };
   await redisSet(url, token, MARKET_IMPLICATIONS_KEY, payload, MARKET_IMPLICATIONS_TTL);
 
@@ -15981,11 +16172,11 @@ Return ONLY a JSON object with no markdown fences:
         { "round": 1, "summary": "<≤160 char>" },
         { "round": 2, "summary": "<≤160 char>" }
       ],
-      "confidence": 0.0,
+      "confidence": 0.35,
       "timingMarkers": [{ "event": "<≤80 char>", "timing": "T+Nh" }]
     },
-    { "pathId": "containment", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.0, "timingMarkers": [] },
-    { "pathId": "market_cascade", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.0, "timingMarkers": [] }
+    { "pathId": "containment", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.50, "timingMarkers": [] },
+    { "pathId": "market_cascade", "label": "...", "summary": "...", "keyActors": [], "roundByRoundEvolution": [], "confidence": 0.15, "timingMarkers": [] }
   ],
   "stabilizers": ["<≤100 char>"],
   "invalidators": ["<≤100 char>"],
@@ -16092,6 +16283,132 @@ async function fetchSimulationOutcomeForMerge(storageConfig, currentRunId) {
   }
 }
 
+/**
+ * Re-apply simulation merge against the just-completed simulation for a run whose deep forecast
+ * had already finished with stale (or no) simulation data. Reads forecast-eval.json + snapshot
+ * from R2, re-runs applySimulationMerge with the fresh outcome, and re-writes trace artifacts if
+ * any path was promoted or demoted.
+ *
+ * Called fire-and-forget from processNextSimulationTask after writeSimulationOutcome.
+ *
+ * @param {string} runId
+ * @param {object} freshOutcome — the simulation outcome just written (theaterResults array)
+ * @param {object} storageConfig
+ * @returns {Promise<{skipped: boolean, reason?: string, status?: string, pathsPromoted?: number, pathsDemoted?: number}>}
+ */
+async function applyPostSimulationRescore(runId, freshOutcome, storageConfig) {
+  if (!runId || !freshOutcome?.theaterResults?.length || !storageConfig) {
+    return { skipped: true, reason: 'missing_params' };
+  }
+  try {
+    const generatedAt = freshOutcome.generatedAt || parseForecastRunGeneratedAt(runId);
+    const artifactKeys = buildForecastTraceArtifactKeys(runId, generatedAt, storageConfig.basePrefix || FORECAST_DEEP_RUN_PREFIX);
+    const snapshotKey = buildDeepForecastSnapshotKey(runId, generatedAt, storageConfig.basePrefix || FORECAST_DEEP_RUN_PREFIX);
+
+    const [evalData, snapshot] = await Promise.all([
+      getR2JsonObject(storageConfig, artifactKeys.forecastEvalKey).catch(() => null),
+      getR2JsonObject(storageConfig, snapshotKey).catch(() => null),
+    ]);
+
+    if (!evalData?.status || (!evalData.selectedPaths?.length && !evalData.rejectedPaths?.length)) {
+      return { skipped: true, reason: 'no_eval_data' };
+    }
+    if (!snapshot?.impactExpansionCandidates?.length) {
+      return { skipped: true, reason: 'no_candidates' };
+    }
+
+    // Only re-score if there is actionable opportunity:
+    // - 'completed_no_material_change': always proceed — any simulation evidence could promote a rejected path
+    // - 'completed': proceed if (a) a selected expanded path risks demotion, or (b) a rejected expanded
+    //   path could be promoted. Thresholds are derived from the max adjustments in computeSimulationAdjustment:
+    //     max positive: +0.08 (bucketChannelMatch) + 0.04 (actor overlap >= 2) = +0.12
+    //     max negative: -0.15 (stabilizer) — larger than invalidator -0.12
+    //   Demotion risk threshold: 0.50 + 0.15 = 0.65. Promotion window: [0.50 - 0.12, 0.50) = [0.38, 0.50).
+    const hasDemotionRisk = (evalData.selectedPaths || []).some(
+      (p) => p.type === 'expanded' && p.acceptanceScore < 0.65,
+    );
+    const hasPromotionOpportunity = (evalData.rejectedPaths || []).some(
+      (p) => p.type === 'expanded' && p.acceptanceScore >= 0.38 && p.acceptanceScore < SIMULATION_MERGE_ACCEPT_THRESHOLD,
+    );
+    if (evalData.status !== 'completed_no_material_change' && !hasDemotionRisk && !hasPromotionOpportunity) {
+      return { skipped: true, reason: 'no_actionable_paths' };
+    }
+
+    const priorWorldState = snapshot.priorWorldStateKey
+      ? await getR2JsonObject(storageConfig, snapshot.priorWorldStateKey).catch(() => null)
+      : null;
+
+    // Reconstruct evaluation from stored paths (full path objects including direct/second/third)
+    const evaluation = {
+      status: evalData.status,
+      selectedPaths: [...(evalData.selectedPaths || [])],
+      rejectedPaths: [...(evalData.rejectedPaths || [])],
+      impactExpansionBundle: null,
+      deepWorldState: null,
+    };
+
+    // Tag the outcome as current-run since we just wrote it for this runId
+    const simulationOutcome = { ...freshOutcome, isCurrentRun: true };
+    const mergeResult = applySimulationMerge(
+      evaluation,
+      simulationOutcome,
+      snapshot.impactExpansionCandidates,
+      snapshot,
+      priorWorldState,
+    );
+
+    const ev = mergeResult.simulationEvidence;
+    if (!ev?.pathsPromoted && !ev?.pathsDemoted) {
+      return { skipped: false, reason: 'no_path_changes', adjustmentsApplied: ev?.adjustments?.length || 0 };
+    }
+
+    // Paths changed — re-write the trace artifacts with updated evaluation + simulation evidence.
+    const deepForecast = {
+      completedAt: new Date().toISOString(),
+      failureReason: '',
+      rejectedPathsPreview: buildDeepForecastRejectedPreview(evaluation.rejectedPaths || []),
+      selectedPathCount: (evaluation.selectedPaths || []).filter((p) => p.type === 'expanded').length,
+      replacedFastRun: evaluation.status === 'completed',
+      status: evaluation.status || 'completed_no_material_change',
+      selectedStateIds: (evaluation.selectedPaths || []).filter((p) => p.type === 'expanded').map((p) => p.candidateStateId),
+      simulationRescored: true,
+    };
+
+    await writeForecastTraceArtifacts({
+      ...snapshot,
+      priorWorldState,
+      priorWorldStates: priorWorldState ? [priorWorldState] : [],
+      impactExpansionBundle: evaluation.impactExpansionBundle || null,
+      deepPathEvaluation: evaluation,
+      simulationEvidence: ev,
+      forecastDepth: 'deep',
+      deepForecast,
+      worldStateOverride: evaluation.deepWorldState,
+      candidateWorldStateOverride: evaluation.deepWorldState,
+      runStatusContext: {
+        status: deepForecast.status,
+        stage: 'deep_rescored',
+        progressPercent: 100,
+        processedCandidateCount: (snapshot.impactExpansionCandidates || []).length,
+        acceptedPathCount: deepForecast.selectedPathCount,
+        completedAt: deepForecast.completedAt,
+      },
+    }, { runId, skipPointer: true });
+
+    return {
+      status: 'rescored',
+      runId,
+      pathsPromoted: ev.pathsPromoted,
+      pathsDemoted: ev.pathsDemoted,
+      adjustmentsApplied: ev.adjustments?.length || 0,
+    };
+  } catch (err) {
+    console.warn(`[SimulationRescore] Error for ${runId}: ${err.message}`);
+    return { skipped: true, reason: `error: ${err.message}` };
+  }
+}
+
+
 async function writeSimulationOutcome(pkg, outcome, { storageConfig } = {}) {
   const config = storageConfig ?? resolveR2StorageConfig();
   if (!config || !pkg?.runId) return null;
@@ -16107,12 +16424,16 @@ async function writeSimulationOutcome(pkg, outcome, { storageConfig } = {}) {
     theaterId: tr.theaterId,
     theaterLabel: tr.theaterLabel || tr.theaterId,
     stateKind: tr.stateKind || '',
-    topPaths: (tr.topPaths || []).slice(0, 3).map((p) => ({
-      label: p.label,
-      summary: p.summary,
-      confidence: p.confidence,
-      keyActors: (p.keyActors || []).slice(0, 4),
-    })),
+    topPaths: (tr.topPaths || [])
+      .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+      .slice(0, 3)
+      .map((p) => ({
+        pathId: p.pathId || '',
+        label: p.label,
+        summary: p.summary,
+        confidence: p.confidence,
+        keyActors: (p.keyActors || []).slice(0, 4),
+      })),
     dominantReactions: (tr.dominantReactions || []).slice(0, 3),
     stabilizers: (tr.stabilizers || []).slice(0, 3),
     invalidators: (tr.invalidators || []).slice(0, 2),
@@ -16296,6 +16617,10 @@ async function processNextSimulationTask(options = {}) {
       const writeResult = await writeSimulationOutcome(pkgData, outcome, { storageConfig });
       await completeSimulationTask(runId);
       console.log(`  [Simulation] Completed ${runId}: ${theaterResults.length} theaters → ${writeResult?.outcomeKey}`);
+      // Fire-and-forget: re-score the deep forecast that may have run with stale simulation data.
+      applyPostSimulationRescore(runId, outcome, storageConfig)
+        .then((r) => { if (r && !r.skipped) console.log(`  [SimulationRescore] ${runId}: ${JSON.stringify(r)}`); })
+        .catch((err) => console.warn(`  [SimulationRescore] Error for ${runId}: ${err.message}`));
       return { status: 'completed', runId, theaterCount: theaterResults.length, outcomeKey: writeResult?.outcomeKey };
     } catch (err) {
       console.warn(`  [Simulation] Task failed for ${runId}: ${err.message}`);
@@ -16486,12 +16811,15 @@ export {
   processNextSimulationTask,
   runSimulationWorker,
   fetchSimulationOutcomeForMerge,
+  applyPostSimulationRescore,
   computeSimulationAdjustment,
   applySimulationMerge,
   matchesBucket,
   matchesChannel,
   contradictsPremise,
   negatesDisruption,
+  normalizeActorName,
+  summarizeImpactPathScore,
   SIMULATION_MERGE_ACCEPT_THRESHOLD,
   scoreImpactExpansionQuality,
   buildImpactExpansionDebugPayload,

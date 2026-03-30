@@ -807,7 +807,17 @@
       "enterRoute": "Enter route and search for prices.",
       "cachedInsight": "Cached insight",
       "demoMode": "DEMO MODE",
-      "pricesIndicative": "All prices indicative"
+      "pricesIndicative": "All prices indicative",
+      "searchFlights": "Search Flights",
+      "bestDates": "Best Dates",
+      "cabinClass": "Cabin",
+      "enterRouteAndDate": "Enter a route and date to search",
+      "enterDateRange": "Enter a route and date range",
+      "degradedResults": "Some results may be incomplete",
+      "nonstop": "nonstop",
+      "roundTrip": "Round-trip",
+      "tripDays": "Trip days",
+      "cheapest": "Cheapest"
     },
     "goodThingsDigest": {
       "noStories": "No stories available",
@@ -1212,6 +1222,14 @@
         "base": "Base",
         "nuclear": "Nuclear",
         "aircraft": "Aircraft",
+        "miningSite": "Mining Site",
+        "commodityPort": "Commodity Port",
+        "pipeline": "Pipeline",
+        "processingPlant": "Processing Plant",
+        "conflict": "Conflict Zone",
+        "diseaseAlert": "Disease Alert",
+        "diseaseWarning": "Disease Warning",
+        "diseaseWatch": "Disease Watch",
         "ciiLow": "Low (0–30)",
         "ciiNormal": "Normal (31–50)",
         "ciiElevated": "Elevated (51–65)",
@@ -1778,7 +1796,9 @@
       "filterPolitics": "Politics",
       "filterMiddleeast": "Middle East",
       "live": "LIVE",
-      "viewSource": "View Source"
+      "viewSource": "View Source",
+      "filterGeopolitics": "Geopolitics",
+      "filterCyber": "Cyber"
     },
     "investments": {
       "infoTooltip": "Database of Saudi Arabia and UAE foreign direct investments in global critical infrastructure. Click a row to fly to the investment on the map.",
@@ -1922,6 +1942,8 @@
       "dragToResize": "Drag to resize (double-click to reset)",
       "openSettings": "Open Settings",
       "closePanel": "Close panel",
+      "collapsePanel": "Collapse panel",
+      "expandPanel": "Expand panel",
       "addPanel": "Add Panel"
     },
     "languageSelector": {

@@ -16,6 +16,7 @@ export interface PanelOptions {
   infoTooltip?: string;
   premium?: 'locked' | 'enhanced';
   closable?: boolean;
+  collapsible?: boolean;
   defaultRowSpan?: number;
 }
 
@@ -58,6 +59,31 @@ function savePanelColSpan(panelId: string, span: number): void {
   const spans = loadPanelColSpans();
   spans[panelId] = span;
   localStorage.setItem(PANEL_COL_SPANS_KEY, JSON.stringify(spans));
+}
+
+const PANEL_COLLAPSED_KEY = 'worldmonitor-panel-collapsed';
+
+function loadPanelCollapsed(): Record<string, boolean> {
+  try {
+    const stored = localStorage.getItem(PANEL_COLLAPSED_KEY);
+    return stored ? JSON.parse(stored) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePanelCollapsed(panelId: string, collapsed: boolean): void {
+  const map = loadPanelCollapsed();
+  if (collapsed) {
+    map[panelId] = true;
+  } else {
+    delete map[panelId];
+  }
+  if (Object.keys(map).length === 0) {
+    localStorage.removeItem(PANEL_COLLAPSED_KEY);
+  } else {
+    localStorage.setItem(PANEL_COLLAPSED_KEY, JSON.stringify(map));
+  }
 }
 
 function clearPanelColSpan(panelId: string): void {
@@ -208,6 +234,8 @@ export class Panel {
   private retryAttempt = 0;
   private _fetching = false;
   private _locked = false;
+  private _collapsed = false;
+  private _collapseBtn: HTMLButtonElement | null = null;
 
   constructor(options: PanelOptions) {
     this.panelId = options.id;
@@ -274,6 +302,10 @@ export class Panel {
       this.header.appendChild(this.countEl);
     }
 
+    if (options.collapsible) {
+      this.appendCollapseButton();
+    }
+
     if (options.closable !== false) {
       this.appendCloseButton();
     }
@@ -284,6 +316,10 @@ export class Panel {
 
     this.element.appendChild(this.header);
     this.element.appendChild(this.content);
+
+    if (this._collapseBtn && loadPanelCollapsed()[this.panelId]) {
+      this._applyCollapsed(this._collapseBtn, true);
+    }
 
     this.content.addEventListener('click', (e) => {
       const target = (e.target as HTMLElement).closest('[data-panel-retry]');
@@ -656,6 +692,35 @@ export class Panel {
     badge.className = 'panel-live-count';
     badge.textContent = `${count}`;
     headerLeft.appendChild(badge);
+  }
+
+  private _applyCollapsed(btn: HTMLButtonElement, collapsed: boolean): void {
+    this._collapsed = collapsed;
+    this.content.style.display = collapsed ? 'none' : '';
+    this.element.classList.toggle('panel-collapsed', collapsed);
+    btn.textContent = collapsed ? '▸' : '▾';
+    const label = collapsed
+      ? (t('components.panel.expandPanel') ?? 'Expand')
+      : (t('components.panel.collapsePanel') ?? 'Collapse');
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  }
+
+  protected appendCollapseButton(): void {
+    const btn = h('button', {
+      className: 'icon-btn panel-collapse-btn',
+      'aria-label': t('components.panel.collapsePanel') ?? 'Collapse',
+      'aria-expanded': 'true',
+      title: t('components.panel.collapsePanel') ?? 'Collapse',
+    }, '▾') as HTMLButtonElement;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._applyCollapsed(btn, !this._collapsed);
+      savePanelCollapsed(this.panelId, this._collapsed);
+    });
+    this._collapseBtn = btn;
+    this.header.appendChild(btn);
   }
 
   protected appendCloseButton(): void {

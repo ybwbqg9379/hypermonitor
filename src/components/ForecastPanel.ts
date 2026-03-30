@@ -38,7 +38,14 @@ const STATE_KIND_DOMAIN: Record<string, string> = {
 };
 
 // --- Types for simulation theater data -------------------------------------
+const PATH_ID_LABELS: Record<string, string> = {
+  escalation:     'Escalation',
+  containment:    'Containment',
+  market_cascade: 'Market Cascade',
+};
+
 interface SimulationPath {
+  pathId: string;
   label: string;
   summary: string;
   confidence: number;
@@ -110,7 +117,11 @@ function injectStyles(): void {
     .fc-gauge-bg { fill: none; stroke: var(--border-color, #30363d); stroke-width: 4; }
     .fc-gauge-fill { fill: none; stroke-width: 4; stroke-linecap: round; }
     .fc-gauge-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 9px; font-weight: 700; }
-    .fc-theater-path { font-size: 9px; color: var(--text-secondary, #7d8590); line-height: 1.4; margin-top: 4px; }
+    .fc-theater-path { font-size: 9px; color: var(--text-secondary, #7d8590); line-height: 1.4; margin-top: 4px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .fc-path-type { font-size: 8px; padding: 1px 4px; border-radius: 2px; font-weight: 600; letter-spacing: 0.03em; opacity: 0.75; white-space: nowrap; }
+    .fc-path-type-escalation    { background: rgba(224,82,82,0.2); color: #e05252; border: 1px solid rgba(224,82,82,0.3); }
+    .fc-path-type-containment   { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.25); }
+    .fc-path-type-market_cascade { background: rgba(210,153,34,0.15); color: #d29922; border: 1px solid rgba(210,153,34,0.25); }
     .fc-cat-tag {
       font-size: 9px; padding: 1px 5px; border-radius: 3px; white-space: nowrap;
       flex-shrink: 0; font-weight: 500; display: inline-block;
@@ -183,10 +194,21 @@ function injectStyles(): void {
     .fc-perspective { font-size: 11px; color: var(--text-secondary, #999); padding: 2px 0; line-height: 1.4; }
     .fc-perspective strong { color: var(--text-primary, #ccc); font-weight: 600; }
     .fc-scenario { font-style: italic; }
-    .fc-signals { margin-top: 2px; }
-    .fc-signal { color: var(--text-secondary, #999); font-size: 11px; padding: 1px 0; }
-    .fc-signal::before { content: ''; display: inline-block; width: 6px; height: 1px; background: var(--text-secondary, #666); margin-right: 6px; vertical-align: middle; }
+    .fc-signals { padding: 8px 14px 4px; border-top: 1px solid var(--border-color, #2a2a2a); }
+    .fc-signals-title { color: var(--text-secondary, #888); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+    .fc-signal { color: var(--text-secondary, #a0a0a0); font-size: 11px; padding: 3px 0 3px 12px; line-height: 1.45; position: relative; margin-top: 2px; }
+    .fc-signal::before { content: ''; position: absolute; left: 0; top: 9px; display: inline-block; width: 6px; height: 1px; background: var(--text-secondary, #555); }
     .fc-empty { padding: 20px; text-align: center; color: var(--text-secondary, #888); }
+
+    /* ── Simulation confidence sub-bar (Option D) ────────────────────────── */
+    /* Thin colored underbar below the forecast title. Width encodes sim       */
+    /* path confidence. At rest: barely visible. On row hover: full opacity   */
+    /* + text label reveals below the bar. Zero extra columns needed.         */
+    .fc-sim-bar-wrap { margin-top: 4px; }
+    .fc-sim-bar { height: 2px; border-radius: 1px; opacity: 0.45; transition: opacity 0.15s; }
+    .fc-prob-item:hover .fc-sim-bar { opacity: 0.9; }
+    .fc-sim-label { font-size: 9px; display: none; margin-top: 2px; line-height: 1.2; }
+    .fc-prob-item:hover .fc-sim-label { display: block; }
   `;
   document.head.appendChild(style);
 }
@@ -330,11 +352,11 @@ export class ForecastPanel extends Panel {
                 stroke-dasharray="${circ.toFixed(1)}"
                 stroke-dashoffset="${offset.toFixed(1)}"/>
             </svg>
-            <span class="fc-gauge-label" style="color:${confColor}">${confPct}%</span>
+            <span class="fc-gauge-label" style="color:${confColor}">${conf > 0 ? confPct + '%' : '—'}</span>
           </div>
         </div>
         <span class="fc-cat-tag" style="background:${color}1f;color:${color};border:1px solid ${color}47">${escapeHtml(catLabel)}</span>
-        ${dominantPath ? `<div class="fc-theater-path">${escapeHtml(dominantPath.label)}</div>` : ''}
+        ${dominantPath ? `<div class="fc-theater-path">${dominantPath.pathId ? `<span class="fc-path-type fc-path-type-${escapeHtml(dominantPath.pathId)}">${escapeHtml(PATH_ID_LABELS[dominantPath.pathId] ?? dominantPath.pathId)}</span>` : ''}${escapeHtml(dominantPath.label)}</div>` : ''}
       </div>
     `;
   }
@@ -348,10 +370,12 @@ export class ForecastPanel extends Panel {
     const pathsHtml = t.topPaths.map(p => {
       const pctColor = p.confidence >= 0.65 ? '#3fb950' : p.confidence >= 0.45 ? '#d29922' : '#e05252';
       const actors = p.keyActors.map(a => `<span class="fc-actor-chip">${escapeHtml(a)}</span>`).join('');
+      const typeTag = p.pathId ? `<span class="fc-path-type fc-path-type-${escapeHtml(p.pathId)}">${escapeHtml(PATH_ID_LABELS[p.pathId] ?? p.pathId)}</span>` : '';
+      const confText = p.confidence > 0 ? `${Math.round(p.confidence * 100)}% probability` : '—';
       return `
         <div class="fc-path-card">
-          <div class="fc-path-label">${escapeHtml(p.label)}</div>
-          <div class="fc-path-conf">${Math.round(p.confidence * 100)}% probability</div>
+          <div class="fc-path-label">${typeTag}${escapeHtml(p.label)}</div>
+          <div class="fc-path-conf">${confText}</div>
           <div class="fc-path-bar" style="background:${pctColor};width:${Math.round(p.confidence * 100)}%"></div>
           <div class="fc-path-summary">${escapeHtml(p.summary)}</div>
           ${actors ? `<div class="fc-path-actors">${actors}</div>` : ''}
@@ -418,17 +442,24 @@ export class ForecastPanel extends Panel {
     const trendText  = f.trend === 'rising' ? '↑ rising' : f.trend === 'falling' ? '↓ falling' : '→ stable';
     const trendColor = f.trend === 'rising' ? '#3fb950' : f.trend === 'falling' ? '#e05252' : '#7d8590';
 
-    const signalsHtml = (f.signals || []).map(s =>
-      `<div class="fc-signal">${escapeHtml(s.value)}</div>`
-    ).join('');
+    const sigs = f.signals || [];
+    const signalsHtml = sigs.length > 0
+      ? `<div class="fc-signals-title">Analysis Signals (${sigs.length})</div>${sigs.map(s =>
+          `<div class="fc-signal">${escapeHtml(s.value.replace(/^[\s\u2013\u2014\-]+/, ''))}</div>`
+        ).join('')}`
+      : '';
+
+    const simBarHtml = this.renderSimBar(f);
+    const demoted = f.demotedBySimulation ?? false;
 
     return `
       <div class="fc-prob-item">
-        <div class="fc-prob-row">
-          <span class="fc-prob-label"
-                style="border-left:2px solid ${catColor}47;padding-left:6px">
+        <div class="fc-prob-row"${demoted ? ' style="opacity:0.5"' : ''}>
+          <div class="fc-prob-label"
+               style="border-left:2px solid ${catColor}47;padding-left:6px">
             ${escapeHtml(f.title)}
-          </span>
+            ${simBarHtml}
+          </div>
           <div class="fc-bar-wrap">
             <div class="fc-prob-bar-track">
               <div class="fc-prob-bar-fill" style="background:${probColor};width:${pct}%"></div>
@@ -443,12 +474,46 @@ export class ForecastPanel extends Panel {
         </div>
         <div class="fc-toggle-row">
           <span class="fc-toggle" data-fc-toggle="detail-${escapeHtml(f.id)}">Analysis</span>
-          ${(f.signals || []).length > 0 ? `<span class="fc-toggle" data-fc-toggle="signals-${escapeHtml(f.id)}">Signals (${(f.signals || []).length})</span>` : ''}
+          ${sigs.length > 0 ? `<span class="fc-toggle" data-fc-toggle="signals-${escapeHtml(f.id)}">Signals (${sigs.length})</span>` : ''}
         </div>
         <div class="fc-detail fc-hidden" data-fc-panel="detail-${escapeHtml(f.id)}">${this.renderDetailBody(f)}</div>
         ${signalsHtml ? `<div class="fc-signals fc-hidden" data-fc-panel="signals-${escapeHtml(f.id)}">${signalsHtml}</div>` : ''}
       </div>
     `;
+  }
+
+  // ── Simulation confidence sub-bar ───────────────────────────────────────
+
+  private renderSimBar(f: Forecast): string {
+    const adj = f.simulationAdjustment ?? 0;
+    if (adj === 0) return '';
+
+    const conf = f.simPathConfidence ?? 1.0;
+    const demoted = f.demotedBySimulation ?? false;
+    const adjPct = Math.round(Math.abs(adj) * 100);
+
+    let barColor: string;
+    let labelText: string;
+
+    if (demoted) {
+      barColor = '#e05252';
+      labelText = `AI flag: dropped · −${adjPct}%`;
+    } else if (adj > 0) {
+      barColor = conf >= 0.70 ? '#3fb950' : '#d29922';
+      labelText = conf < 0.70 ? `AI signal (moderate) · +${adjPct}%` : `AI signal · +${adjPct}%`;
+    } else {
+      barColor = '#ea580c';
+      labelText = `AI caution · −${adjPct}%`;
+    }
+
+    // Width encodes sim-path confidence for positive adjustments (at least 20% so bar is visible).
+    // Negative adjustments use 100% width — structural signal, not confidence-dependent.
+    const barWidthPct = adj > 0 ? Math.round(Math.max(20, conf * 100)) : 100;
+
+    return `<div class="fc-sim-bar-wrap">
+      <div class="fc-sim-bar" style="width:${barWidthPct}%;background:${barColor}"></div>
+      <span class="fc-sim-label" style="color:${barColor}">${escapeHtml(labelText)}</span>
+    </div>`;
   }
 
   // ── Detail sections (shared by rows) ────────────────────────────────────
