@@ -70,12 +70,12 @@ Recommended cadence: **weekly**, or when upstream has significant updates.
 
 ### Common Conflict Zones
 
-| File | Typical Conflict | Resolution |
-|------|-----------------|------------|
-| `vercel.json` | CSP script hashes, source patterns | Accept upstream hashes + keep our `frame-ancestors` entries |
-| `package.json` | New dependencies | Accept upstream + keep our `dev:hyper` scripts |
-| `src/config/panels.ts` | New panel definitions | Accept upstream + keep our `HYPER_*` configs |
-| `vite.config.ts` | Build config changes | Accept upstream + keep our embed/CSP customizations |
+| File                   | Typical Conflict                   | Resolution                                                  |
+| ---------------------- | ---------------------------------- | ----------------------------------------------------------- |
+| `vercel.json`          | CSP script hashes, source patterns | Accept upstream hashes + keep our `frame-ancestors` entries |
+| `package.json`         | New dependencies                   | Accept upstream + keep our `dev:hyper` scripts              |
+| `src/config/panels.ts` | New panel definitions              | Accept upstream + keep our `HYPER_*` configs                |
+| `vite.config.ts`       | Build config changes               | Accept upstream + keep our embed/CSP customizations         |
 
 ### Post-Merge Test Checklist
 
@@ -155,6 +155,7 @@ fix(test): update test mocks to match self-hosted paths
 dependency references that npm 10 (CI) rejects.
 
 **Fix**:
+
 ```bash
 rm -rf node_modules blog-site/node_modules package-lock.json
 npm install
@@ -165,7 +166,7 @@ git commit -m "fix(ci): regenerate package-lock.json from scratch"
 ### Tests fail after upstream merge
 
 Check the Post-Merge Test Checklist above. Common causes:
+
 - URL mocks in tests don't match our self-hosted paths
 - `vercel.json` security header assertions don't match our CSP customizations
 - New upstream panels reference config keys not present in `HYPER_PANELS`
-
