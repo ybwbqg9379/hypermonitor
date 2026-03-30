@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm ci
+      - run: npm install
       - run: npm run test:data
       - name: Edge function bundle check
         run: |
