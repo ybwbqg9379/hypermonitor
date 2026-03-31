@@ -19,7 +19,8 @@ import { calculateCII } from '@/services/country-instability';
 import { getRecentAlerts } from '@/services/cross-module-integration';
 
 const ALLOWED_ORIGINS = [
-  'https://hyperinsights.vercel.app',
+  'https://in-sights.app',
+  'https://www.in-sights.app',
   'http://localhost:3000',
 ];
 

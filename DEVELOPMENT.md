@@ -33,7 +33,7 @@ git merge upstream/main --no-edit
 
 # 2. Resolve any conflicts (typically vercel.json CSP changes)
 #    - Accept upstream's CSP hashes / source patterns
-#    - Re-add our hyperinsights.vercel.app to frame-ancestors
+#    - Re-add our in-sights.app and www.in-sights.app to frame-ancestors
 #    - Re-add any hyper-specific origins
 
 # 3. CRITICAL: Regenerate package-lock.json from scratch
