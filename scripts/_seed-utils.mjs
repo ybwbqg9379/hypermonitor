@@ -5,13 +5,6 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import * as http from 'node:http';
-import * as tls from 'node:tls';
-import * as https from 'node:https';
-import { promisify } from 'node:util';
-import { gunzip as _gunzip } from 'node:zlib';
-
-const gunzip = promisify(_gunzip);
 
 const CHROME_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
 const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024; // 5MB per key
@@ -200,7 +193,7 @@ export async function atomicPublish(canonicalKey, data, validateFn, ttlSeconds) 
   return { payloadBytes, recordCount: Array.isArray(data) ? data.length : null };
 }
 
-export async function writeFreshnessMetadata(domain, resource, count, source) {
+export async function writeFreshnessMetadata(domain, resource, count, source, ttlSeconds) {
   const { url, token } = getRedisCredentials();
   const metaKey = `seed-meta:${domain}:${resource}`;
   const meta = {
@@ -208,7 +201,10 @@ export async function writeFreshnessMetadata(domain, resource, count, source) {
     recordCount: count,
     sourceVersion: source || '',
   };
-  await redisSet(url, token, metaKey, meta, 86400 * 7); // 7 day TTL on metadata
+  // Use the data TTL if it exceeds 7 days so monthly/annual seeds don't lose
+  // their meta key before the health check maxStaleMin threshold is reached.
+  const metaTtl = Math.max(86400 * 7, ttlSeconds || 0);
+  await redisSet(url, token, metaKey, meta, metaTtl);
   return meta;
 }
 
@@ -260,15 +256,16 @@ export async function writeExtraKey(key, data, ttl) {
   console.log(`  Extra key ${key}: written`);
 }
 
-export async function writeExtraKeyWithMeta(key, data, ttl, recordCount, metaKeyOverride) {
+export async function writeExtraKeyWithMeta(key, data, ttl, recordCount, metaKeyOverride, metaTtlSeconds) {
   await writeExtraKey(key, data, ttl);
   const { url, token } = getRedisCredentials();
   const metaKey = metaKeyOverride || `seed-meta:${key.replace(/:v\d+$/, '')}`;
   const meta = { fetchedAt: Date.now(), recordCount: recordCount ?? 0 };
+  const metaTtl = metaTtlSeconds ?? 86400 * 7;
   const resp = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(['SET', metaKey, JSON.stringify(meta), 'EX', 86400 * 7]),
+    body: JSON.stringify(['SET', metaKey, JSON.stringify(meta), 'EX', metaTtl]),
     signal: AbortSignal.timeout(5_000),
   });
   if (!resp.ok) console.warn(`  seed-meta ${metaKey}: write failed`);
@@ -308,13 +305,6 @@ export function sleep(ms) {
 }
 
 // ─── Proxy helpers for sources that block Railway container IPs ───
-// TODO: consolidate all fetch+proxy logic into a single proxyFetch(url, options) helper.
-// Current state: _seed-utils has fredFetchJson (fixed: direct-first, proxy fallback) and
-// curlFetch (curl-only, relay container). seed-disease-outbreaks.mjs and seed-fear-greed.mjs
-// each define their own local curlFetch that silently fails with ENOENT in seeder containers
-// (curl not in node:22-alpine). Each of those scripts should use a shared fetchWithProxyFallback
-// that tries native fetch first and falls back to httpsProxyFetchJson — same pattern as
-// fredFetchJson after this fix. Tracked: consolidate into one exported function.
 const { resolveProxyString, resolveProxyStringConnect } = createRequire(import.meta.url)('./_proxy-utils.cjs');
 
 export function resolveProxy() {
@@ -342,89 +332,47 @@ export function curlFetch(url, proxyAuth, headers = {}) {
   return raw.slice(0, nl);
 }
 
-// Pure Node.js HTTPS-through-HTTP-proxy (CONNECT tunnel).
-// Replaces curlFetch for seeder scripts running in containers without curl.
-// proxyAuth format: "user:pass@host:port"
+// Pure Node.js HTTPS-through-proxy (CONNECT tunnel).
+// proxyAuth format: "user:pass@host:port" (bare/Decodo → TLS) OR
+//                  "https://user:pass@host:port" (explicit TLS) OR
+//                  "http://user:pass@host:port"  (explicit plain TCP)
+// Bare/undeclared-scheme proxies always use TLS (Decodo gate.decodo.com requires it).
+// Explicit http:// proxies use plain TCP to avoid breaking non-TLS setups.
 async function httpsProxyFetchJson(url, proxyAuth) {
-  const targetUrl = new URL(url);
-  const atIdx = proxyAuth.lastIndexOf('@');
-  const credentials = atIdx >= 0 ? proxyAuth.slice(0, atIdx) : '';
-  const hostPort = atIdx >= 0 ? proxyAuth.slice(atIdx + 1) : proxyAuth;
-  const colonIdx = hostPort.lastIndexOf(':');
-  const proxyHost = hostPort.slice(0, colonIdx);
-  const proxyPort = parseInt(hostPort.slice(colonIdx + 1), 10);
+  const { buffer } = await httpsProxyFetchRaw(url, proxyAuth, { accept: 'application/json' });
+  return JSON.parse(buffer.toString('utf8'));
+}
 
-  const connectHeaders = {};
-  if (credentials) {
-    connectHeaders['Proxy-Authorization'] = `Basic ${Buffer.from(credentials).toString('base64')}`;
-  }
-
-  const { socket } = await new Promise((resolve, reject) => {
-    http.request({
-      host: proxyHost, port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetUrl.hostname}:443`,
-      headers: connectHeaders,
-    }).on('connect', (res, socket) => {
-      if (res.statusCode !== 200) {
-        socket.destroy();
-        return reject(Object.assign(new Error(`Proxy CONNECT: ${res.statusCode}`), { status: res.statusCode }));
-      }
-      resolve({ socket });
-    }).on('error', reject).end();
-  });
-
-  const tlsSock = tls.connect({ socket, servername: targetUrl.hostname, ALPNProtocols: ['http/1.1'] });
-  await new Promise((resolve, reject) => {
-    tlsSock.on('secureConnect', resolve);
-    tlsSock.on('error', reject);
-  });
-
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { tlsSock.destroy(); reject(new Error('FRED proxy fetch timeout')); }, 20000);
-    const fail = (e) => { clearTimeout(timer); tlsSock.destroy(); reject(e); };
-
-    https.request({
-      host: targetUrl.hostname,
-      path: targetUrl.pathname + targetUrl.search,
-      method: 'GET',
-      headers: { Accept: 'application/json', 'Accept-Encoding': 'gzip', 'User-Agent': CHROME_UA },
-      createConnection: () => tlsSock,
-    }, (resp) => {
-      clearTimeout(timer);
-      if (resp.statusCode < 200 || resp.statusCode >= 300) {
-        resp.resume();
-        return reject(Object.assign(new Error(`HTTP ${resp.statusCode}`), { status: resp.statusCode }));
-      }
-      const chunks = [];
-      resp.on('data', c => chunks.push(c));
-      resp.on('end', () => {
-        const body = Buffer.concat(chunks);
-        const isGzip = (resp.headers['content-encoding'] || '').includes('gzip');
-        (isGzip ? gunzip(body) : Promise.resolve(body))
-          .then(data => { try { resolve(JSON.parse(data.toString('utf8'))); } catch (e) { fail(e); } })
-          .catch(fail);
-      });
-      resp.on('error', fail);
-    }).on('error', fail).end();
-  });
+export async function httpsProxyFetchRaw(url, proxyAuth, { accept = '*/*', timeoutMs = 20_000 } = {}) {
+  const { proxyFetch, parseProxyConfig } = createRequire(import.meta.url)('./_proxy-utils.cjs');
+  const proxyConfig = parseProxyConfig(proxyAuth);
+  if (!proxyConfig) throw new Error('Invalid proxy auth string');
+  const result = await proxyFetch(url, proxyConfig, { accept, timeoutMs, headers: { 'User-Agent': CHROME_UA } });
+  if (!result.ok) throw Object.assign(new Error(`HTTP ${result.status}`), { status: result.status });
+  return { buffer: result.buffer, contentType: result.contentType };
 }
 
 // Fetch JSON from a FRED URL, routing through proxy when available.
+// Proxy-first: FRED consistently blocks/throttles Railway datacenter IPs,
+// so try proxy first to avoid 20s timeout on every direct attempt.
 export async function fredFetchJson(url, proxyAuth) {
-  try {
-    const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
-    if (r.ok) return r.json();
-    throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
-  } catch (directErr) {
-    if (!proxyAuth) throw directErr;
-    console.warn(`  [fredFetch] direct failed (${directErr.message}) — retrying via proxy`);
+  if (proxyAuth) {
     try {
       return await httpsProxyFetchJson(url, proxyAuth);
     } catch (proxyErr) {
-      throw Object.assign(new Error(`proxy: ${proxyErr.message}`), { cause: proxyErr });
+      console.warn(`  [fredFetch] proxy failed (${proxyErr.message}) — retrying direct`);
+      try {
+        const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+        if (r.ok) return r.json();
+        throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
+      } catch (directErr) {
+        throw Object.assign(new Error(`direct: ${directErr.message}`), { cause: directErr });
+      }
     }
   }
+  const r = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(20_000) });
+  if (r.ok) return r.json();
+  throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
 }
 
 // ---------------------------------------------------------------------------
@@ -713,7 +661,7 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
       await extendExistingTtl(keys, ttlSeconds || 600);
       // Always write seed-meta even when data is empty so health checks can
       // distinguish "seeder ran but nothing to publish" from "seeder stopped".
-      await writeFreshnessMetadata(domain, resource, 0, opts.sourceVersion);
+      await writeFreshnessMetadata(domain, resource, 0, opts.sourceVersion, ttlSeconds);
       console.log(`  SKIPPED: validation failed (empty data) — seed-meta refreshed, existing cache TTL extended`);
       console.log(`\n=== Done (${Math.round(durationMs)}ms, no write) ===`);
       await releaseLock(`${domain}:${resource}`, runId);
@@ -744,7 +692,7 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
       await afterPublish(data, { canonicalKey, ttlSeconds, recordCount, runId });
     }
 
-    const meta = await writeFreshnessMetadata(domain, resource, recordCount, opts.sourceVersion);
+    const meta = await writeFreshnessMetadata(domain, resource, recordCount, opts.sourceVersion, ttlSeconds);
 
     const durationMs = Date.now() - startMs;
     logSeedResult(domain, recordCount, durationMs, { payloadBytes });

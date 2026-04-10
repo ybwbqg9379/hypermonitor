@@ -20,14 +20,41 @@ const TRADE_TTL = 21600;
 const TARIFF_TTL = 28800; // 8h — 2h buffer over 6h cron cadence (was TRADE_TTL=6h = 0 buffer)
 const CUSTOMS_TTL = 86400; // 24h — monthly Treasury data, matches maxStaleMin:1440 (was TRADE_TTL=6h = 0 buffer)
 
-const MAJOR_REPORTERS = ['840', '156', '276', '392', '826', '356', '076', '643', '410', '036', '124', '484', '250', '380', '528'];
+// Reporter list fetched dynamically from WTO API at startup.
+// WorldMonitor = WORLD coverage — use whatever the WTO API supports.
+import { readFileSync as _readFileSync } from 'node:fs';
+import { dirname as _dirname, join as _join } from 'node:path';
+import { fileURLToPath as _fileURLToPath } from 'node:url';
+const __dirname = _dirname(_fileURLToPath(import.meta.url));
+const _un2iso2 = JSON.parse(_readFileSync(_join(__dirname, '..', 'shared', 'un-to-iso2.json'), 'utf8'));
 
-const WTO_MEMBER_CODES = {
-  '840': 'United States', '156': 'China', '276': 'Germany', '392': 'Japan',
-  '826': 'United Kingdom', '250': 'France', '356': 'India', '643': 'Russia',
-  '076': 'Brazil', '410': 'South Korea', '036': 'Australia', '124': 'Canada',
-  '484': 'Mexico', '380': 'Italy', '528': 'Netherlands', '000': 'World',
-};
+// Populated by fetchWtoReporters() before any data fetches
+let ALL_REPORTERS = [];
+
+async function fetchWtoReporters() {
+  const apiKey = process.env.WTO_API_KEY;
+  if (!apiKey) { console.warn('[WTO] WTO_API_KEY not set'); return; }
+  try {
+    const resp = await fetch('https://api.wto.org/timeseries/v1/reporters', {
+      headers: { 'Ocp-Apim-Subscription-Key': apiKey, 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    ALL_REPORTERS = data.map(r => String(r.code)).filter(c => /^\d+$/.test(c) && c !== '000');
+    console.log(`  WTO reporters: ${ALL_REPORTERS.length} economies`);
+  } catch (err) {
+    console.warn(`[WTO] Failed to fetch reporter list: ${err.message}, using un-to-iso2.json fallback`);
+    ALL_REPORTERS = Object.keys(_un2iso2);
+  }
+}
+
+// ISO2 lookup for cache keys — derived from the same un-to-iso2.json
+const WTO_CODE_TO_ISO2 = { ..._un2iso2 };
+
+function getReporterIso2() {
+  return ALL_REPORTERS.map(c => WTO_CODE_TO_ISO2[c]).filter(Boolean);
+}
 
 // ─── Shipping Rates (FRED) ───
 
@@ -251,7 +278,9 @@ async function fetchBudgetLabEffectiveTariffRate() {
     const html = await resp.text();
     const parsed = parseBudgetLabEffectiveTariffHtml(html);
     if (!parsed) {
-      console.warn('  Budget Lab tariffs: effective tariff rate not found in page content');
+      const hasBody = html.length > 5000 && /<body/i.test(html);
+      const reason = hasBody ? 'page structure changed' : 'JS-rendered SPA (no static content)';
+      console.log(`  Budget Lab tariffs: skipped (${reason})`);
       return null;
     }
     console.log(`  Budget Lab effective tariff: ${parsed.tariffRate.toFixed(1)}%${parsed.observationPeriod ? ` (${parsed.observationPeriod})` : ''}`);
@@ -282,24 +311,29 @@ function parseFlowRows(data, indicator) {
   return dataset.map(row => {
     const year = parseInt(row.Year ?? row.year ?? '', 10);
     const value = parseFloat(row.Value ?? row.value ?? '');
-    return !Number.isNaN(year) && !Number.isNaN(value) ? { year, indicator, value } : null;
+    if (Number.isNaN(year) || Number.isNaN(value)) return null;
+    return { year, indicator, value, reporterName: row.ReportingEconomy ?? '', partnerName: row.PartnerEconomy ?? '' };
   }).filter(Boolean);
 }
 
 function buildFlowRecords(rows, reporterCode, partnerCode) {
   const byYear = new Map();
+  let reporterName = reporterCode;
+  let partnerName = partnerCode === '000' ? 'World' : partnerCode;
   for (const row of rows) {
     if (!byYear.has(row.year)) byYear.set(row.year, { exports: 0, imports: 0 });
     const e = byYear.get(row.year);
     if (row.indicator === 'ITS_MTV_AX') e.exports = row.value; else e.imports = row.value;
+    if (row.reporterName) reporterName = row.reporterName;
+    if (row.partnerName && partnerCode !== '000') partnerName = row.partnerName;
   }
   const sortedYears = [...byYear.keys()].sort((a, b) => a - b);
   return sortedYears.map((year, i) => {
     const cur = byYear.get(year);
     const prev = i > 0 ? byYear.get(sortedYears[i - 1]) : null;
     return {
-      reportingCountry: WTO_MEMBER_CODES[reporterCode] ?? reporterCode,
-      partnerCountry: partnerCode === '000' ? 'World' : (WTO_MEMBER_CODES[partnerCode] ?? partnerCode),
+      reportingCountry: reporterName,
+      partnerCountry: partnerName,
       year, exportValueUsd: cur.exports, importValueUsd: cur.imports,
       yoyExportChange: prev?.exports > 0 ? Math.round(((cur.exports - prev.exports) / prev.exports) * 10000) / 100 : 0,
       yoyImportChange: prev?.imports > 0 ? Math.round(((cur.imports - prev.imports) / prev.imports) * 10000) / 100 : 0,
@@ -330,7 +364,7 @@ async function fetchTradeFlows() {
   const flows = {};
   const years = 10;
 
-  for (const reporter of MAJOR_REPORTERS) {
+  for (const reporter of ALL_REPORTERS) {
     await fetchFlowPair(reporter, '000', years, flows);
     await sleep(500);
   }
@@ -340,7 +374,7 @@ async function fetchTradeFlows() {
     await sleep(500);
   }
 
-  console.log(`  Trade flows: ${Object.keys(flows).length} pairs (${MAJOR_REPORTERS.length} world + ${BILATERAL_PAIRS.length} bilateral)`);
+  console.log(`  Trade flows: ${Object.keys(flows).length} pairs (${ALL_REPORTERS.length} world + ${BILATERAL_PAIRS.length} bilateral)`);
   return flows;
 }
 
@@ -348,14 +382,22 @@ async function fetchTradeFlows() {
 
 async function fetchTradeBarriers() {
   const currentYear = new Date().getFullYear();
-  const reporters = MAJOR_REPORTERS.join(',');
-
-  const [agriResult, nonAgriResult] = await Promise.allSettled([
-    wtoFetch('/data', { i: 'TP_A_0160', r: reporters, ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '500' }),
-    wtoFetch('/data', { i: 'TP_A_0430', r: reporters, ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '500' }),
-  ]);
-  const agriData = agriResult.status === 'fulfilled' ? agriResult.value : null;
-  const nonAgriData = nonAgriResult.status === 'fulfilled' ? nonAgriResult.value : null;
+  const BATCH = 30;
+  const allAgri = [];
+  const allNonAgri = [];
+  for (let i = 0; i < ALL_REPORTERS.length; i += BATCH) {
+    const batch = ALL_REPORTERS.slice(i, i + BATCH).join(',');
+    const [agriResult, nonAgriResult] = await Promise.allSettled([
+      wtoFetch('/data', { i: 'TP_A_0160', r: batch, ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '5000' }),
+      wtoFetch('/data', { i: 'TP_A_0430', r: batch, ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '5000' }),
+    ]);
+    if (agriResult.status === 'fulfilled' && agriResult.value) allAgri.push(agriResult.value);
+    if (nonAgriResult.status === 'fulfilled' && nonAgriResult.value) allNonAgri.push(nonAgriResult.value);
+    await sleep(1000);
+  }
+  const mergeDatasets = (results) => results.flatMap(d => Array.isArray(d) ? d : d?.Dataset ?? d?.dataset ?? []);
+  const agriData = allAgri.length > 0 ? { Dataset: mergeDatasets(allAgri) } : null;
+  const nonAgriData = allNonAgri.length > 0 ? { Dataset: mergeDatasets(allNonAgri) } : null;
   if (!agriData && !nonAgriData) return null;
 
   const parseRows = (data) => {
@@ -364,7 +406,7 @@ async function fetchTradeBarriers() {
       const year = parseInt(row.Year ?? row.year ?? '0', 10);
       const value = parseFloat(row.Value ?? row.value ?? '');
       const cc = String(row.ReportingEconomyCode ?? '');
-      return !Number.isNaN(year) && !Number.isNaN(value) && cc ? { country: WTO_MEMBER_CODES[cc] ?? '', countryCode: cc, year, value } : null;
+      return !Number.isNaN(year) && !Number.isNaN(value) && cc ? { country: String(row.ReportingEconomy ?? ''), countryCode: cc, year, value } : null;
     }).filter(Boolean);
   };
 
@@ -404,20 +446,27 @@ async function fetchTradeBarriers() {
     return gapB - gapA;
   });
   console.log(`  Trade barriers: ${barriers.length} countries`);
-  return { barriers: barriers.slice(0, 50), fetchedAt: new Date().toISOString(), upstreamUnavailable: false };
+  return { barriers, _reporterCountries: getReporterIso2(), fetchedAt: new Date().toISOString(), upstreamUnavailable: false };
 }
 
 // ─── Trade Restrictions (WTO) ───
 
 async function fetchTradeRestrictions() {
   const currentYear = new Date().getFullYear();
-  const data = await wtoFetch('/data', {
-    i: 'TP_A_0010', r: MAJOR_REPORTERS.join(','),
-    ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '500',
-  });
-  if (!data) return null;
+  const BATCH = 30;
+  const allResults = [];
+  for (let i = 0; i < ALL_REPORTERS.length; i += BATCH) {
+    const batch = ALL_REPORTERS.slice(i, i + BATCH).join(',');
+    const data = await wtoFetch('/data', {
+      i: 'TP_A_0010', r: batch,
+      ps: `${currentYear - 3}-${currentYear}`, fmt: 'json', mode: 'full', max: '5000',
+    });
+    if (data) allResults.push(data);
+    await sleep(1000);
+  }
+  if (allResults.length === 0) return null;
 
-  const dataset = Array.isArray(data) ? data : data?.Dataset ?? data?.dataset ?? [];
+  const dataset = allResults.flatMap(d => Array.isArray(d) ? d : d?.Dataset ?? d?.dataset ?? []);
   const latestByCountry = new Map();
   for (const row of dataset) {
     const code = String(row.ReportingEconomyCode ?? '');
@@ -433,7 +482,7 @@ async function fetchTradeRestrictions() {
     const year = String(row.Year ?? row.year ?? '');
     return {
       id: `${cc}-${year}-${row.IndicatorCode ?? ''}`,
-      reportingCountry: WTO_MEMBER_CODES[cc] ?? String(row.ReportingEconomy ?? ''),
+      reportingCountry: String(row.ReportingEconomy ?? cc),
       affectedCountry: 'All trading partners', productSector: 'All products',
       measureType: 'WTO MFN Baseline', description: `WTO MFN baseline: ${value.toFixed(1)}%`,
       status: value > 10 ? 'high' : value > 5 ? 'moderate' : 'low',
@@ -443,10 +492,10 @@ async function fetchTradeRestrictions() {
     const rateA = parseFloat(a.description.match(/[\d.]+/)?.[0] ?? '0');
     const rateB = parseFloat(b.description.match(/[\d.]+/)?.[0] ?? '0');
     return rateB - rateA;
-  }).slice(0, 50);
+  });
 
   console.log(`  Trade restrictions: ${restrictions.length} countries`);
-  return { restrictions, fetchedAt: new Date().toISOString(), upstreamUnavailable: false };
+  return { restrictions, _reporterCountries: getReporterIso2(), fetchedAt: new Date().toISOString(), upstreamUnavailable: false };
 }
 
 // ─── Tariff Trends (WTO) — pre-seed major reporters ───
@@ -456,36 +505,50 @@ async function fetchTariffTrends() {
   const trends = {};
   const usEffectiveTariffRate = await fetchBudgetLabEffectiveTariffRate();
 
-  for (const reporter of MAJOR_REPORTERS) {
-    const years = 10;
+  // Batch WTO requests in groups of 30 to avoid URL length limits
+  const BATCH_SIZE = 30;
+  const years = 10;
+  for (let i = 0; i < ALL_REPORTERS.length; i += BATCH_SIZE) {
+    const batch = ALL_REPORTERS.slice(i, i + BATCH_SIZE);
     const data = await wtoFetch('/data', {
-      i: 'TP_A_0010', r: reporter,
-      ps: `${currentYear - years}-${currentYear}`, fmt: 'json', mode: 'full', max: '500',
+      i: 'TP_A_0010', r: batch.join(','),
+      ps: `${currentYear - years}-${currentYear}`, fmt: 'json', mode: 'full', max: '5000',
     });
-    if (!data) { await sleep(500); continue; }
+    if (!data) { await sleep(1000); continue; }
     const dataset = Array.isArray(data) ? data : data?.Dataset ?? data?.dataset ?? [];
-    const datapoints = dataset.map(row => {
-      const year = parseInt(row.Year ?? row.year ?? '', 10);
-      const tariffRate = parseFloat(row.Value ?? row.value ?? '');
-      if (Number.isNaN(year) || Number.isNaN(tariffRate)) return null;
-      return {
-        reportingCountry: WTO_MEMBER_CODES[reporter] ?? reporter,
-        partnerCountry: 'World', productSector: 'All products',
-        year, tariffRate: Math.round(tariffRate * 100) / 100,
-        boundRate: 0, indicatorCode: 'TP_A_0010',
-      };
-    }).filter(Boolean).sort((a, b) => a.year - b.year);
 
-    if (datapoints.length > 0) {
-      const cacheKey = `trade:tariffs:v1:${reporter}:all:${years}`;
-      trends[cacheKey] = {
-        datapoints,
-        ...(reporter === '840' && usEffectiveTariffRate ? { effectiveTariffRate: usEffectiveTariffRate } : {}),
-        fetchedAt: new Date().toISOString(),
-        upstreamUnavailable: false,
-      };
+    // Group by reporter code
+    const byReporter = new Map();
+    for (const row of dataset) {
+      const code = String(row.ReportingEconomyCode ?? '');
+      if (!byReporter.has(code)) byReporter.set(code, []);
+      byReporter.get(code).push(row);
     }
-    await sleep(500);
+
+    for (const [reporter, rows] of byReporter) {
+      const datapoints = rows.map(row => {
+        const year = parseInt(row.Year ?? row.year ?? '', 10);
+        const tariffRate = parseFloat(row.Value ?? row.value ?? '');
+        if (Number.isNaN(year) || Number.isNaN(tariffRate)) return null;
+        return {
+          reportingCountry: row.ReportingEconomy ?? reporter,
+          partnerCountry: 'World', productSector: 'All products',
+          year, tariffRate: Math.round(tariffRate * 100) / 100,
+          boundRate: 0, indicatorCode: 'TP_A_0010',
+        };
+      }).filter(Boolean).sort((a, b) => a.year - b.year);
+
+      if (datapoints.length > 0) {
+        const cacheKey = `trade:tariffs:v1:${reporter}:all:${years}`;
+        trends[cacheKey] = {
+          datapoints,
+          ...(reporter === '840' && usEffectiveTariffRate ? { effectiveTariffRate: usEffectiveTariffRate } : {}),
+          fetchedAt: new Date().toISOString(),
+          upstreamUnavailable: false,
+        };
+      }
+    }
+    await sleep(1000);
   }
   console.log(`  Tariff trends: ${Object.keys(trends).length} countries`);
   return trends;
@@ -534,6 +597,7 @@ async function fetchCustomsRevenue() {
 // ─── Main ───
 
 async function fetchAll() {
+  await fetchWtoReporters();
   const [shipping, scfi, ccfi, bdi, barriers, restrictions, flows, tariffs, customs] = await Promise.allSettled([
     fetchShippingRates(),
     fetchSCFI(),

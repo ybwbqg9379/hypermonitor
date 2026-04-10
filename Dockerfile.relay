@@ -18,9 +18,14 @@ WORKDIR /app
 COPY scripts/package.json scripts/package-lock.json ./scripts/
 RUN npm ci --prefix scripts --omit=dev
 
-# Relay script and shared CJS helpers
+# Relay script and shared helpers
 COPY scripts/ais-relay.cjs ./scripts/ais-relay.cjs
 COPY scripts/_proxy-utils.cjs ./scripts/_proxy-utils.cjs
+COPY scripts/_seed-utils.mjs ./scripts/_seed-utils.mjs
+COPY scripts/_country-resolver.mjs ./scripts/_country-resolver.mjs
+COPY scripts/seed-climate-news.mjs ./scripts/seed-climate-news.mjs
+COPY scripts/seed-chokepoint-flows.mjs ./scripts/seed-chokepoint-flows.mjs
+COPY scripts/seed-ember-electricity.mjs ./scripts/seed-ember-electricity.mjs
 
 # Shared helper required by the relay (rss-allowed-domains.cjs)
 COPY shared/ ./shared/

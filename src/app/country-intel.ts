@@ -28,6 +28,11 @@ import { renderStoryToCanvas } from '@/services/story-renderer';
 import { openStoryModal } from '@/components/StoryModal';
 import { MarketServiceClient } from '@/generated/client/worldmonitor/market/v1/service_client';
 import { IntelligenceServiceClient } from '@/generated/client/worldmonitor/intelligence/v1/service_client';
+import { TradeServiceClient } from '@/generated/client/worldmonitor/trade/v1/service_client';
+import { SupplyChainServiceClient } from '@/generated/client/worldmonitor/supply_chain/v1/service_client';
+import { EconomicServiceClient } from '@/generated/client/worldmonitor/economic/v1/service_client';
+import { hasPremiumAccess } from '@/services/panel-gating';
+import { getAuthState } from '@/services/auth-state';
 import { showMapContextMenu } from '@/components/MapContextMenu';
 import { BETA_MODE } from '@/config/beta';
 import { MILITARY_BASES } from '@/config';
@@ -40,8 +45,10 @@ import type { StrategicPosturePanel } from '@/components/StrategicPosturePanel';
 import type { NewsItem } from '@/types';
 import { getNearbyInfrastructure } from '@/services/related-assets';
 import { toFlagEmoji } from '@/utils/country-flag';
+import { iso2ToIso3, iso2ToUnCode } from '@/utils/country-codes';
 import { buildDependencyGraph } from '@/services/infrastructure-cascade';
 import { getActiveFrameworkForPanel, subscribeFrameworkChange } from '@/services/analysis-framework-store';
+import { fetchMultiSectorExposure } from '@/services/supply-chain';
 
 type IntlDisplayNamesCtor = new (
   locales: string | string[],
@@ -283,6 +290,154 @@ export class CountryIntelManager implements AppModule {
         });
       });
 
+    intelClient.getCountryEnergyProfile({ countryCode: code })
+      .then((profile) => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        this.ctx.countryBriefPage.updateEnergyProfile?.({
+          mixAvailable: profile.mixAvailable,
+          mixYear: profile.mixYear,
+          coalShare: profile.coalShare,
+          gasShare: profile.gasShare,
+          oilShare: profile.oilShare,
+          nuclearShare: profile.nuclearShare,
+          renewShare: profile.renewShare,
+          windShare: profile.windShare,
+          solarShare: profile.solarShare,
+          hydroShare: profile.hydroShare,
+          importShare: profile.importShare,
+          gasStorageAvailable: profile.gasStorageAvailable,
+          gasStorageFillPct: profile.gasStorageFillPct,
+          gasStorageChange1d: profile.gasStorageChange1d,
+          gasStorageTrend: profile.gasStorageTrend,
+          gasStorageDate: profile.gasStorageDate,
+          electricityAvailable: profile.electricityAvailable,
+          electricityPriceMwh: profile.electricityPriceMwh,
+          electricitySource: profile.electricitySource,
+          electricityDate: profile.electricityDate,
+          jodiOilAvailable: profile.jodiOilAvailable,
+          jodiOilDataMonth: profile.jodiOilDataMonth,
+          gasolineDemandKbd: profile.gasolineDemandKbd,
+          gasolineImportsKbd: profile.gasolineImportsKbd,
+          dieselDemandKbd: profile.dieselDemandKbd,
+          dieselImportsKbd: profile.dieselImportsKbd,
+          jetDemandKbd: profile.jetDemandKbd,
+          jetImportsKbd: profile.jetImportsKbd,
+          lpgDemandKbd: profile.lpgDemandKbd,
+          lpgImportsKbd: profile.lpgImportsKbd,
+          crudeImportsKbd: profile.crudeImportsKbd,
+          jodiGasAvailable: profile.jodiGasAvailable,
+          jodiGasDataMonth: profile.jodiGasDataMonth,
+          gasTotalDemandTj: profile.gasTotalDemandTj,
+          gasLngImportsTj: profile.gasLngImportsTj,
+          gasPipeImportsTj: profile.gasPipeImportsTj,
+          gasLngShare: profile.gasLngShare,
+          ieaStocksAvailable: profile.ieaStocksAvailable,
+          ieaStocksDataMonth: profile.ieaStocksDataMonth,
+          ieaDaysOfCover: profile.ieaDaysOfCover,
+          ieaNetExporter: profile.ieaNetExporter,
+          ieaBelowObligation: profile.ieaBelowObligation,
+          emberFossilShare: profile.emberFossilShare,
+          emberRenewShare: profile.emberRenewShare,
+          emberNuclearShare: profile.emberNuclearShare,
+          emberCoalShare: profile.emberCoalShare,
+          emberGasShare: profile.emberGasShare,
+          emberDemandTwh: profile.emberDemandTwh,
+          emberDataMonth: profile.emberDataMonth,
+          emberAvailable: profile.emberAvailable,
+          sprRegime: profile.sprRegime,
+          sprCapacityMb: profile.sprCapacityMb,
+          sprOperator: profile.sprOperator,
+          sprIeaMember: profile.sprIeaMember,
+          sprStockholdingModel: profile.sprStockholdingModel,
+          sprNote: profile.sprNote,
+          sprSource: profile.sprSource,
+          sprAsOf: profile.sprAsOf,
+          sprAvailable: profile.sprAvailable,
+        });
+      })
+      .catch(() => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        this.ctx.countryBriefPage.updateEnergyProfile?.({
+          mixAvailable: false, mixYear: 0, coalShare: 0, gasShare: 0, oilShare: 0,
+          nuclearShare: 0, renewShare: 0, windShare: 0, solarShare: 0, hydroShare: 0,
+          importShare: 0, gasStorageAvailable: false, gasStorageFillPct: 0,
+          gasStorageChange1d: 0, gasStorageTrend: '', gasStorageDate: '', electricityAvailable: false,
+          electricityPriceMwh: 0, electricitySource: '', electricityDate: '',
+          jodiOilAvailable: false, jodiOilDataMonth: '', gasolineDemandKbd: 0,
+          gasolineImportsKbd: 0, dieselDemandKbd: 0, dieselImportsKbd: 0,
+          jetDemandKbd: 0, jetImportsKbd: 0, lpgDemandKbd: 0, lpgImportsKbd: 0,
+          crudeImportsKbd: 0, jodiGasAvailable: false, jodiGasDataMonth: '',
+          gasTotalDemandTj: 0, gasLngImportsTj: 0, gasPipeImportsTj: 0,
+          gasLngShare: 0, ieaStocksAvailable: false, ieaStocksDataMonth: '',
+          ieaDaysOfCover: 0, ieaNetExporter: false, ieaBelowObligation: false,
+          emberFossilShare: 0, emberRenewShare: 0, emberNuclearShare: 0,
+          emberCoalShare: 0, emberGasShare: 0, emberDemandTwh: 0,
+          emberDataMonth: '', emberAvailable: false,
+          sprRegime: 'unknown', sprCapacityMb: 0, sprOperator: '', sprIeaMember: false,
+          sprStockholdingModel: '', sprNote: '', sprSource: '', sprAsOf: '',
+          sprAvailable: false,
+        });
+      });
+
+    intelClient.getCountryPortActivity({ countryCode: code })
+      .then((activity) => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        this.ctx.countryBriefPage.updateMaritimeActivity?.({
+          available: activity.available,
+          ports: (activity.ports ?? []).map((p) => ({
+            portId: p.portId,
+            portName: p.portName,
+            lat: p.lat,
+            lon: p.lon,
+            tankerCalls30d: p.tankerCalls30d,
+            trendDeltaPct: p.trendDeltaPct,
+            importTankerDwt: p.importTankerDwt,
+            exportTankerDwt: p.exportTankerDwt,
+            anomalySignal: p.anomalySignal,
+          })),
+          fetchedAt: activity.fetchedAt,
+        });
+      })
+      .catch(() => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        this.ctx.countryBriefPage.updateMaritimeActivity?.({ available: false, ports: [], fetchedAt: '' });
+      });
+
+    // Fetch multi-sector exposure (all 10 seeded HS2 codes in parallel)
+    fetchMultiSectorExposure(code)
+      .then((sectors) => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        if (sectors.length === 0) {
+          this.ctx.countryBriefPage.updateTradeExposure?.(null);
+          return;
+        }
+        // Build a synthetic compat response from sector data (no extra fetch needed)
+        const top = sectors[0]!;
+        const syntheticResponse = {
+          iso2: code,
+          hs2: top.hs2,
+          exposures: sectors.slice(0, 3).map(s => ({
+            chokepointId: s.primaryChokepointId,
+            chokepointName: s.primaryChokepointName,
+            exposureScore: s.exposureScore,
+            coastSide: '',
+            shockSupported: s.hs2 === '27',
+          })),
+          primaryChokepointId: top.primaryChokepointId,
+          vulnerabilityIndex: top.vulnerabilityIndex,
+          fetchedAt: new Date().toISOString(),
+        };
+        this.ctx.countryBriefPage.updateTradeExposure?.(syntheticResponse, sectors);
+      })
+      .catch(() => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        this.ctx.countryBriefPage.updateTradeExposure?.(null);
+      });
+
+    if (hasPremiumAccess(getAuthState())) {
+      this.fetchProSections(code);
+    }
+
     this.mountCountryTimeline(code, country);
 
     try {
@@ -397,6 +552,100 @@ export class CountryIntelManager implements AppModule {
       this.ctx.countryBriefPage?.updateBrief({ brief: '', country, code, error: 'Failed to generate brief' });
     }
   }
+
+  private fetchProSections(code: string): void {
+    const rpcBase = getRpcBaseUrl();
+    const fetchFn = (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args);
+    const economicClient = new EconomicServiceClient(rpcBase, { fetch: fetchFn });
+    const intelClientPro = new IntelligenceServiceClient(rpcBase, { fetch: fetchFn });
+    const tradeClient = new TradeServiceClient(rpcBase, { fetch: fetchFn });
+    const supplyChainClient = new SupplyChainServiceClient(rpcBase, { fetch: fetchFn });
+
+    const iso3 = iso2ToIso3(code);
+
+    economicClient.getNationalDebt({}).then(resp => {
+      if (this.ctx.countryBriefPage?.getCode() !== code) return;
+      const entry = iso3 ? resp.entries?.find(e => e.iso3 === iso3) : null;
+      this.ctx.countryBriefPage.updateNationalDebt?.(entry ? {
+        debtToGdp: entry.debtToGdp,
+        debtUsd: entry.debtUsd,
+        annualGrowth: entry.annualGrowth,
+        source: entry.source,
+      } : null);
+    }).catch(() => {
+      if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateNationalDebt?.(null);
+    });
+
+    intelClientPro.getCountryRisk({ countryCode: code }).then(resp => {
+      if (this.ctx.countryBriefPage?.getCode() !== code) return;
+      this.ctx.countryBriefPage.updateSanctionsPressure?.(resp.sanctionsCount > 0 ? {
+        entryCount: resp.sanctionsCount,
+        sanctionsActive: resp.sanctionsActive,
+      } : null);
+    }).catch(() => {
+      if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateSanctionsPressure?.(null);
+    });
+
+    const unCode = iso2ToUnCode(code);
+    if (unCode) {
+      tradeClient.listComtradeFlows({ reporterCode: unCode, cmdCode: '', anomaliesOnly: false }).then(resp => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        const topFlows = (resp.flows || [])
+          .sort((a, b) => b.tradeValueUsd - a.tradeValueUsd)
+          .slice(0, 5)
+          .map(f => ({ partnerName: f.partnerName, cmdDesc: f.cmdDesc, tradeValueUsd: f.tradeValueUsd, yoyChange: f.yoyChange }));
+        this.ctx.countryBriefPage.updateComtradeFlows?.(topFlows.length > 0 ? topFlows : null);
+      }).catch(() => {
+        if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateComtradeFlows?.(null);
+      });
+
+      tradeClient.getTariffTrends({ reportingCountry: unCode, productSector: '', years: 10, partnerCountry: '' }).then(resp => {
+        if (this.ctx.countryBriefPage?.getCode() !== code) return;
+        const pts = resp.datapoints || [];
+        const latest = pts[pts.length - 1];
+        this.ctx.countryBriefPage.updateTariffTrends?.(latest ? {
+          currentRate: resp.effectiveTariffRate?.tariffRate ?? latest.tariffRate,
+          trend: pts.length >= 2 && pts[pts.length - 1]!.tariffRate > pts[pts.length - 2]!.tariffRate ? 'rising' : 'falling',
+          datapoints: pts.map(p => ({ year: p.year, tariffRate: p.tariffRate })),
+        } : null);
+      }).catch(() => {
+        if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateTariffTrends?.(null);
+      });
+    } else {
+      this.ctx.countryBriefPage?.updateComtradeFlows?.(null);
+      this.ctx.countryBriefPage?.updateTariffTrends?.(null);
+    }
+
+    supplyChainClient.getCountryChokepointIndex({ iso2: code, hs2: '27' }).then(resp => {
+      if (this.ctx.countryBriefPage?.getCode() !== code) return;
+      const exps = resp.exposures || [];
+      this.ctx.countryBriefPage.updateChokepointExposure?.(exps.length > 0 ? {
+        vulnerabilityIndex: resp.vulnerabilityIndex,
+        exposures: exps.slice(0, 3).map(e => ({ chokepointName: e.chokepointName, exposureScore: e.exposureScore })),
+      } : null);
+
+      if (resp.primaryChokepointId) {
+        supplyChainClient.getCountryCostShock({ iso2: code, chokepointId: resp.primaryChokepointId, hs2: '27' }).then(shock => {
+          if (this.ctx.countryBriefPage?.getCode() !== code) return;
+          this.ctx.countryBriefPage.updateCostShock?.((shock.supplyDeficitPct > 0 || shock.coverageDays > 0) ? {
+            supplyDeficitPct: shock.supplyDeficitPct,
+            coverageDays: shock.coverageDays,
+            warRiskTier: shock.warRiskTier,
+          } : null);
+        }).catch(() => {
+          if (this.ctx.countryBriefPage?.getCode() === code) this.ctx.countryBriefPage.updateCostShock?.(null);
+        });
+      } else {
+        this.ctx.countryBriefPage.updateCostShock?.(null);
+      }
+    }).catch(() => {
+      if (this.ctx.countryBriefPage?.getCode() === code) {
+        this.ctx.countryBriefPage.updateChokepointExposure?.(null);
+        this.ctx.countryBriefPage.updateCostShock?.(null);
+      }
+    });
+  }
+
 
   refreshOpenBrief(): void {
     const page = this.ctx.countryBriefPage;

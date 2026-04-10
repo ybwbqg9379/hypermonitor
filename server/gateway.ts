@@ -16,6 +16,8 @@ import { validateApiKey } from '../api/_api-key.js';
 import { mapErrorToResponse } from './error-mapper';
 import { checkRateLimit, checkEndpointRateLimit, hasEndpointRatePolicy } from './_shared/rate-limit';
 import { drainResponseHeaders } from './_shared/response-headers';
+import { checkEntitlement, getRequiredTier } from './_shared/entitlement-check';
+import { resolveSessionUserId } from './_shared/auth-session';
 import type { ServerOptions } from '../src/generated/server/worldmonitor/seismology/v1/service_server';
 
 export const serverOptions: ServerOptions = { onError: mapErrorToResponse };
@@ -26,17 +28,16 @@ export const serverOptions: ServerOptions = { onError: mapErrorToResponse };
 
 type CacheTier = 'fast' | 'medium' | 'slow' | 'slow-browser' | 'static' | 'daily' | 'no-store';
 
-// Browser-only cache: no `public` or `s-maxage` so Cloudflare (which ignores
-// Vary: Origin) does NOT cache these responses. CF sits in front of api.worldmonitor.app
-// and would otherwise pin ACAO: worldmonitor.app on the cached response, breaking CORS
-// for preview deployments. Vercel CDN caching is handled separately by CDN-Cache-Control.
+// Three-tier caching: browser (max-age) → CF edge (s-maxage) → Vercel CDN (CDN-Cache-Control).
+// CF ignores Vary: Origin so it may pin a single ACAO value, but this is acceptable
+// since production traffic is same-origin and preview deployments hit Vercel CDN directly.
 const TIER_HEADERS: Record<CacheTier, string> = {
-  fast: 'max-age=60, stale-while-revalidate=60, stale-if-error=600',
-  medium: 'max-age=120, stale-while-revalidate=120, stale-if-error=900',
-  slow: 'max-age=300, stale-while-revalidate=300, stale-if-error=3600',
+  fast: 'public, max-age=60, s-maxage=300, stale-while-revalidate=60, stale-if-error=600',
+  medium: 'public, max-age=120, s-maxage=600, stale-while-revalidate=120, stale-if-error=900',
+  slow: 'public, max-age=300, s-maxage=1800, stale-while-revalidate=300, stale-if-error=3600',
   'slow-browser': 'max-age=300, stale-while-revalidate=60, stale-if-error=1800',
-  static: 'max-age=600, stale-while-revalidate=600, stale-if-error=14400',
-  daily: 'max-age=3600, stale-while-revalidate=7200, stale-if-error=172800',
+  static: 'public, max-age=600, s-maxage=3600, stale-while-revalidate=600, stale-if-error=14400',
+  daily: 'public, max-age=3600, s-maxage=14400, stale-while-revalidate=7200, stale-if-error=172800',
   'no-store': 'no-store',
 };
 
@@ -78,7 +79,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/infrastructure/v1/list-internet-traffic-anomalies': 'slow',
 
   '/api/unrest/v1/list-unrest-events': 'slow',
-  '/api/cyber/v1/list-cyber-threats': 'slow',
+  '/api/cyber/v1/list-cyber-threats': 'static',
   '/api/conflict/v1/list-acled-events': 'slow',
   '/api/military/v1/get-theater-posture': 'slow',
   '/api/infrastructure/v1/get-temporal-baseline': 'slow',
@@ -97,7 +98,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/natural/v1/list-natural-events': 'slow',
   '/api/wildfire/v1/list-fire-detections': 'static',
   '/api/maritime/v1/list-navigational-warnings': 'static',
-  '/api/supply-chain/v1/get-shipping-rates': 'static',
+  '/api/supply-chain/v1/get-shipping-rates': 'daily',
   '/api/economic/v1/get-fred-series': 'static',
   '/api/economic/v1/get-bls-series': 'daily',
   '/api/economic/v1/get-energy-prices': 'static',
@@ -106,35 +107,41 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/giving/v1/get-giving-summary': 'static',
   '/api/intelligence/v1/get-country-intel-brief': 'static',
   '/api/intelligence/v1/get-gdelt-topic-timeline': 'medium',
-  '/api/climate/v1/list-climate-anomalies': 'static',
-  '/api/sanctions/v1/list-sanctions-pressure': 'static',
+  '/api/climate/v1/list-climate-anomalies': 'daily',
+  '/api/climate/v1/list-climate-disasters': 'daily',
+  '/api/climate/v1/get-co2-monitoring': 'daily',
+  '/api/climate/v1/get-ocean-ice-data': 'daily',
+  '/api/climate/v1/list-air-quality-data': 'fast',
+  '/api/climate/v1/list-climate-news': 'slow',
+  '/api/sanctions/v1/list-sanctions-pressure': 'daily',
   '/api/sanctions/v1/lookup-sanction-entity': 'no-store',
   '/api/radiation/v1/list-radiation-observations': 'slow',
   '/api/thermal/v1/list-thermal-escalations': 'slow',
-  '/api/research/v1/list-tech-events': 'static',
-  '/api/military/v1/get-usni-fleet-report': 'static',
+  '/api/research/v1/list-tech-events': 'daily',
+  '/api/military/v1/get-usni-fleet-report': 'daily',
   '/api/military/v1/list-defense-patents': 'daily',
-  '/api/conflict/v1/list-ucdp-events': 'static',
-  '/api/conflict/v1/get-humanitarian-summary': 'static',
+  '/api/conflict/v1/list-ucdp-events': 'daily',
+  '/api/conflict/v1/get-humanitarian-summary': 'daily',
   '/api/conflict/v1/list-iran-events': 'slow',
-  '/api/displacement/v1/get-displacement-summary': 'static',
-  '/api/displacement/v1/get-population-exposure': 'static',
-  '/api/economic/v1/get-bis-policy-rates': 'static',
-  '/api/economic/v1/get-bis-exchange-rates': 'static',
-  '/api/economic/v1/get-bis-credit': 'static',
-  '/api/trade/v1/get-tariff-trends': 'static',
-  '/api/trade/v1/get-trade-flows': 'static',
-  '/api/trade/v1/get-trade-barriers': 'static',
-  '/api/trade/v1/get-trade-restrictions': 'static',
-  '/api/trade/v1/get-customs-revenue': 'static',
-  '/api/trade/v1/list-comtrade-flows': 'static',
-  '/api/economic/v1/list-world-bank-indicators': 'static',
-  '/api/economic/v1/get-energy-capacity': 'static',
-  '/api/economic/v1/list-grocery-basket-prices': 'static',
-  '/api/economic/v1/list-bigmac-prices': 'static',
-  '/api/economic/v1/list-fuel-prices': 'static',
-  '/api/economic/v1/get-crude-inventories': 'static',
-  '/api/economic/v1/get-nat-gas-storage': 'static',
+  '/api/displacement/v1/get-displacement-summary': 'daily',
+  '/api/displacement/v1/get-population-exposure': 'daily',
+  '/api/economic/v1/get-bis-policy-rates': 'daily',
+  '/api/economic/v1/get-bis-exchange-rates': 'daily',
+  '/api/economic/v1/get-bis-credit': 'daily',
+  '/api/trade/v1/get-tariff-trends': 'daily',
+  '/api/trade/v1/get-trade-flows': 'daily',
+  '/api/trade/v1/get-trade-barriers': 'daily',
+  '/api/trade/v1/get-trade-restrictions': 'daily',
+  '/api/trade/v1/get-customs-revenue': 'daily',
+  '/api/trade/v1/list-comtrade-flows': 'daily',
+  '/api/economic/v1/list-world-bank-indicators': 'daily',
+  '/api/economic/v1/get-energy-capacity': 'daily',
+  '/api/economic/v1/list-grocery-basket-prices': 'daily',
+  '/api/economic/v1/list-bigmac-prices': 'daily',
+  '/api/economic/v1/list-fuel-prices': 'daily',
+  '/api/economic/v1/get-fao-food-price-index': 'daily',
+  '/api/economic/v1/get-crude-inventories': 'daily',
+  '/api/economic/v1/get-nat-gas-storage': 'daily',
   '/api/economic/v1/get-eu-yield-curve': 'daily',
   '/api/supply-chain/v1/get-critical-minerals': 'daily',
   '/api/military/v1/get-aircraft-details': 'static',
@@ -152,7 +159,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/infrastructure/v1/get-cable-health': 'slow',
   '/api/positive-events/v1/list-positive-geo-events': 'slow',
 
-  '/api/military/v1/list-military-bases': 'static',
+  '/api/military/v1/list-military-bases': 'daily',
   '/api/economic/v1/get-macro-signals': 'medium',
   '/api/economic/v1/get-national-debt': 'daily',
   '/api/prediction/v1/list-prediction-markets': 'medium',
@@ -163,7 +170,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/news/v1/list-feed-digest': 'slow',
   '/api/intelligence/v1/get-country-facts': 'daily',
   '/api/intelligence/v1/list-security-advisories': 'slow',
-  '/api/intelligence/v1/list-satellites': 'slow',
+  '/api/intelligence/v1/list-satellites': 'static',
   '/api/intelligence/v1/list-gps-interference': 'slow',
   '/api/intelligence/v1/list-cross-source-signals': 'medium',
   '/api/intelligence/v1/list-oref-alerts': 'fast',
@@ -197,11 +204,22 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/economic/v1/get-ecb-fx-rates': 'slow',
   '/api/economic/v1/get-eurostat-country-data': 'slow',
   '/api/economic/v1/get-eu-gas-storage': 'slow',
+  '/api/economic/v1/get-oil-stocks-analysis': 'static',
   '/api/economic/v1/get-eu-fsi': 'slow',
   '/api/economic/v1/get-economic-stress': 'slow',
   '/api/supply-chain/v1/get-shipping-stress': 'medium',
+  '/api/supply-chain/v1/get-country-chokepoint-index': 'slow-browser',
+  '/api/supply-chain/v1/get-bypass-options': 'slow-browser',
+  '/api/supply-chain/v1/get-country-cost-shock': 'slow-browser',
+  '/api/supply-chain/v1/get-sector-dependency': 'slow-browser',
   '/api/health/v1/list-disease-outbreaks': 'slow',
+  '/api/health/v1/list-air-quality-alerts': 'fast',
   '/api/intelligence/v1/get-social-velocity': 'fast',
+  '/api/intelligence/v1/get-country-energy-profile': 'slow',
+  '/api/intelligence/v1/compute-energy-shock': 'fast',
+  '/api/intelligence/v1/get-country-port-activity': 'slow',
+  '/api/resilience/v1/get-resilience-score': 'slow',
+  '/api/resilience/v1/get-resilience-ranking': 'slow',
 };
 
 import { PREMIUM_RPC_PATHS } from '../src/shared/premium-paths';
@@ -242,12 +260,36 @@ export function createDomainGateway(
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // API key validation
+    // Tier gate check first — JWT resolution is expensive (JWKS + RS256) and only needed
+    // for tier-gated endpoints. Non-tier-gated endpoints never use sessionUserId.
+    const isTierGated = getRequiredTier(pathname) !== null;
+    const needsLegacyProBearerGate = PREMIUM_RPC_PATHS.has(pathname) && !isTierGated;
+
+    // Session resolution — extract userId from bearer token (Clerk JWT) if present.
+    // Only runs for tier-gated endpoints to avoid JWKS lookup on every request.
+    let sessionUserId: string | null = null;
+    if (isTierGated) {
+      sessionUserId = await resolveSessionUserId(request);
+      if (sessionUserId) {
+        request = new Request(request.url, {
+          method: request.method,
+          headers: (() => {
+            const h = new Headers(request.headers);
+            h.set('x-user-id', sessionUserId);
+            return h;
+          })(),
+          body: request.body,
+        });
+      }
+    }
+
+    // API key validation — tier-gated endpoints require EITHER an API key OR a valid bearer token.
+    // Authenticated users (sessionUserId present) bypass the API key requirement.
     const keyCheck = validateApiKey(request, {
-      forceKey: PREMIUM_RPC_PATHS.has(pathname),
+      forceKey: (isTierGated && !sessionUserId) || needsLegacyProBearerGate,
     });
     if (keyCheck.required && !keyCheck.valid) {
-      if (PREMIUM_RPC_PATHS.has(pathname)) {
+      if (needsLegacyProBearerGate) {
         const authHeader = request.headers.get('Authorization');
         if (authHeader?.startsWith('Bearer ')) {
           const { validateBearerToken } = await import('./auth-session');
@@ -277,6 +319,30 @@ export function createDomainGateway(
           headers: { 'Content-Type': 'application/json', ...corsHeaders },
         });
       }
+    }
+
+    // Bearer role check — authenticated users who bypassed the API key gate still
+    // need a pro role for PREMIUM_RPC_PATHS (entitlement check below handles tier-gated).
+    if (sessionUserId && !keyCheck.valid && needsLegacyProBearerGate) {
+      const authHeader = request.headers.get('Authorization');
+      if (authHeader?.startsWith('Bearer ')) {
+        const { validateBearerToken } = await import('./auth-session');
+        const session = await validateBearerToken(authHeader.slice(7));
+        if (!session.valid || session.role !== 'pro') {
+          return new Response(JSON.stringify({ error: 'Pro subscription required' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+        }
+      }
+    }
+
+    // Entitlement check — blocks tier-gated endpoints for users below required tier.
+    // Valid API-key holders bypass entitlement checks (they have full access by virtue
+    // of possessing a key). Only bearer-token users go through the tier gate.
+    if (!(keyCheck.valid && request.headers.get('X-WorldMonitor-Key'))) {
+      const entitlementResponse = await checkEntitlement(request, pathname, corsHeaders);
+      if (entitlementResponse) return entitlementResponse;
     }
 
     // IP-based rate limiting — two-phase: endpoint-specific first, then global fallback
@@ -361,7 +427,9 @@ export function createDomainGateway(
       } else {
         const rpcName = pathname.split('/').pop() ?? '';
         const envOverride = process.env[`CACHE_TIER_OVERRIDE_${rpcName.replace(/-/g, '_').toUpperCase()}`] as CacheTier | undefined;
-        const tier = (envOverride && envOverride in TIER_HEADERS ? envOverride : null) ?? RPC_CACHE_TIER[pathname] ?? 'medium';
+        const isPremium = PREMIUM_RPC_PATHS.has(pathname) || getRequiredTier(pathname) !== null;
+        const tier = isPremium ? 'slow-browser' as CacheTier
+          : (envOverride && envOverride in TIER_HEADERS ? envOverride : null) ?? RPC_CACHE_TIER[pathname] ?? 'medium';
         mergedHeaders.set('Cache-Control', TIER_HEADERS[tier]);
         // Only allow Vercel CDN caching for trusted origins (worldmonitor.app, Vercel previews,
         // Tauri). No-origin server-side requests (external scrapers) must always reach the edge
@@ -369,7 +437,7 @@ export function createDomainGateway(
         // 200 from a trusted-origin browser request could be served to a no-origin scraper,
         // bypassing auth entirely.
         const reqOrigin = request.headers.get('origin') || '';
-        const cdnCache = isAllowedOrigin(reqOrigin) ? TIER_CDN_CACHE[tier] : null;
+        const cdnCache = !isPremium && isAllowedOrigin(reqOrigin) ? TIER_CDN_CACHE[tier] : null;
         if (cdnCache) mergedHeaders.set('CDN-Cache-Control', cdnCache);
         mergedHeaders.set('X-Cache-Tier', tier);
 

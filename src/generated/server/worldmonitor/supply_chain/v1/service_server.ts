@@ -51,6 +51,8 @@ export interface ChokepointInfo {
   directions: string[];
   directionalDwt: DirectionalDwt[];
   transitSummary?: TransitSummary;
+  flowEstimate?: FlowEstimate;
+  warRiskTier: WarRiskTier;
 }
 
 export interface DirectionalDwt {
@@ -79,6 +81,25 @@ export interface TransitDayCount {
   cargo: number;
   other: number;
   total: number;
+  container: number;
+  dryBulk: number;
+  generalCargo: number;
+  roro: number;
+  capContainer: number;
+  capDryBulk: number;
+  capGeneralCargo: number;
+  capRoro: number;
+  capTanker: number;
+}
+
+export interface FlowEstimate {
+  currentMbd: number;
+  baselineMbd: number;
+  flowRatio: number;
+  disrupted: boolean;
+  source: string;
+  hazardAlertLevel: string;
+  hazardAlertName: string;
 }
 
 export interface GetCriticalMineralsRequest {
@@ -125,6 +146,99 @@ export interface ShippingStressCarrier {
   carrierType: string;
   sparkline: number[];
 }
+
+export interface GetCountryChokepointIndexRequest {
+  iso2: string;
+  hs2: string;
+}
+
+export interface GetCountryChokepointIndexResponse {
+  iso2: string;
+  hs2: string;
+  exposures: ChokepointExposureEntry[];
+  primaryChokepointId: string;
+  vulnerabilityIndex: number;
+  fetchedAt: string;
+}
+
+export interface ChokepointExposureEntry {
+  chokepointId: string;
+  chokepointName: string;
+  exposureScore: number;
+  coastSide: string;
+  shockSupported: boolean;
+}
+
+export interface GetBypassOptionsRequest {
+  chokepointId: string;
+  cargoType: string;
+  closurePct: number;
+}
+
+export interface GetBypassOptionsResponse {
+  chokepointId: string;
+  cargoType: string;
+  closurePct: number;
+  options: BypassOption[];
+  fetchedAt: string;
+  primaryChokepointWarRiskTier: WarRiskTier;
+}
+
+export interface BypassOption {
+  id: string;
+  name: string;
+  type: string;
+  addedTransitDays: number;
+  addedCostMultiplier: number;
+  capacityConstraintTonnage: string;
+  suitableCargoTypes: string[];
+  activationThreshold: string;
+  waypointChokepointIds: string[];
+  liveScore: number;
+  bypassWarRiskTier: WarRiskTier;
+  notes: string;
+}
+
+export interface GetCountryCostShockRequest {
+  iso2: string;
+  chokepointId: string;
+  hs2: string;
+}
+
+export interface GetCountryCostShockResponse {
+  iso2: string;
+  chokepointId: string;
+  hs2: string;
+  supplyDeficitPct: number;
+  coverageDays: number;
+  warRiskPremiumBps: number;
+  warRiskTier: WarRiskTier;
+  hasEnergyModel: boolean;
+  unavailableReason: string;
+  fetchedAt: string;
+}
+
+export interface GetSectorDependencyRequest {
+  iso2: string;
+  hs2: string;
+}
+
+export interface GetSectorDependencyResponse {
+  iso2: string;
+  hs2: string;
+  hs2Label: string;
+  flags: DependencyFlag[];
+  primaryExporterIso2: string;
+  primaryExporterShare: number;
+  primaryChokepointId: string;
+  primaryChokepointExposure: number;
+  hasViableBypass: boolean;
+  fetchedAt: string;
+}
+
+export type DependencyFlag = "DEPENDENCY_FLAG_UNSPECIFIED" | "DEPENDENCY_FLAG_SINGLE_SOURCE_CRITICAL" | "DEPENDENCY_FLAG_SINGLE_CORRIDOR_CRITICAL" | "DEPENDENCY_FLAG_COMPOUND_RISK" | "DEPENDENCY_FLAG_DIVERSIFIABLE";
+
+export type WarRiskTier = "WAR_RISK_TIER_UNSPECIFIED" | "WAR_RISK_TIER_NORMAL" | "WAR_RISK_TIER_ELEVATED" | "WAR_RISK_TIER_HIGH" | "WAR_RISK_TIER_CRITICAL" | "WAR_RISK_TIER_WAR_ZONE";
 
 export interface FieldViolation {
   field: string;
@@ -175,6 +289,10 @@ export interface SupplyChainServiceHandler {
   getChokepointStatus(ctx: ServerContext, req: GetChokepointStatusRequest): Promise<GetChokepointStatusResponse>;
   getCriticalMinerals(ctx: ServerContext, req: GetCriticalMineralsRequest): Promise<GetCriticalMineralsResponse>;
   getShippingStress(ctx: ServerContext, req: GetShippingStressRequest): Promise<GetShippingStressResponse>;
+  getCountryChokepointIndex(ctx: ServerContext, req: GetCountryChokepointIndexRequest): Promise<GetCountryChokepointIndexResponse>;
+  getBypassOptions(ctx: ServerContext, req: GetBypassOptionsRequest): Promise<GetBypassOptionsResponse>;
+  getCountryCostShock(ctx: ServerContext, req: GetCountryCostShockRequest): Promise<GetCountryCostShockResponse>;
+  getSectorDependency(ctx: ServerContext, req: GetSectorDependencyRequest): Promise<GetSectorDependencyResponse>;
 }
 
 export function createSupplyChainServiceRoutes(
@@ -309,6 +427,200 @@ export function createSupplyChainServiceRoutes(
 
           const result = await handler.getShippingStress(ctx, body);
           return new Response(JSON.stringify(result as GetShippingStressResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/supply-chain/v1/get-country-chokepoint-index",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetCountryChokepointIndexRequest = {
+            iso2: params.get("iso2") ?? "",
+            hs2: params.get("hs2") ?? "",
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getCountryChokepointIndex", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getCountryChokepointIndex(ctx, body);
+          return new Response(JSON.stringify(result as GetCountryChokepointIndexResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/supply-chain/v1/get-bypass-options",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetBypassOptionsRequest = {
+            chokepointId: params.get("chokepointId") ?? "",
+            cargoType: params.get("cargoType") ?? "",
+            closurePct: Number(params.get("closurePct") ?? "0"),
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getBypassOptions", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getBypassOptions(ctx, body);
+          return new Response(JSON.stringify(result as GetBypassOptionsResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/supply-chain/v1/get-country-cost-shock",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetCountryCostShockRequest = {
+            iso2: params.get("iso2") ?? "",
+            chokepointId: params.get("chokepointId") ?? "",
+            hs2: params.get("hs2") ?? "",
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getCountryCostShock", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getCountryCostShock(ctx, body);
+          return new Response(JSON.stringify(result as GetCountryCostShockResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/supply-chain/v1/get-sector-dependency",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetSectorDependencyRequest = {
+            iso2: params.get("iso2") ?? "",
+            hs2: params.get("hs2") ?? "",
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getSectorDependency", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getSectorDependency(ctx, body);
+          return new Response(JSON.stringify(result as GetSectorDependencyResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
